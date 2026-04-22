@@ -1,7 +1,15 @@
 'use client'
 
-import { Project } from '@/types'
+import { useMemo } from 'react'
+import { Project, ProjectDeviceFilters } from '@/types'
 import { SidePanel, CloseIcon } from '@/components/ui'
+import {
+  generateProjectDevices,
+  applyDeviceFilters,
+  DEVICE_TYPE_LABEL,
+  DEVICE_SENSOR_LABEL,
+  countActiveDeviceFilters,
+} from '@/lib/projectDevices'
 
 interface ProjectsPanelProps {
   open: boolean
@@ -11,94 +19,176 @@ interface ProjectsPanelProps {
   onClose: () => void
   onOpenFilters?: () => void
   activeFilterCount?: number
+  deviceFilters?: ProjectDeviceFilters
+  onOpenDeviceFilters?: () => void
+  deviceOverrides?: Record<string, Partial<{ name: string }>>
+  onSelectDevice?: (deviceId: string) => void
 }
 
-export function ProjectsPanel({ open, projects, selectedProject, onSelectProject, onClose, onOpenFilters, activeFilterCount = 0 }: ProjectsPanelProps) {
-  if (selectedProject) {
-    const hasCoords = !!selectedProject.coords?.length
-    const deviceDensity = hasCoords
-      ? (selectedProject.devices / Math.max(selectedProject.coords!.length, 1)).toFixed(1)
-      : '—'
+function FiltersButton({ count, onClick }: { count: number; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-black/10 bg-white text-neutral-700 cursor-pointer hover:bg-black/[0.03] transition-colors"
+    >
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+        <path d="M2 4h12M4 8h8M6 12h4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      </svg>
+      Filtros
+      {count > 0 && (
+        <span className="ml-0.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-neutral-900 text-white text-[10px] font-medium">
+          {count}
+        </span>
+      )}
+    </button>
+  )
+}
 
-    const seed = selectedProject.id.split('').reduce((a, c) => a + c.charCodeAt(0), 0)
-    const weights = [0.30, 0.18, 0.22, 0.30]
-    const names = ['Bancos', 'Papeleras', 'Luminarias', 'Sensores IoT']
-    const rawCounts = weights.map((w, i) => Math.max(1, Math.round(selectedProject.devices * w) + ((seed + i * 7) % 3 - 1)))
-    const diff = selectedProject.devices - rawCounts.reduce((a, b) => a + b, 0)
-    rawCounts[3] = Math.max(1, rawCounts[3] + diff)
-    const deviceTypes = names.map((name, i) => ({
-      name,
-      count: rawCounts[i],
-      status: (seed + i) % 5 === 0 ? ('err' as const) : ('ok' as const),
-    }))
+function ProjectDetail({
+  project,
+  open,
+  onBack,
+  onClose,
+  deviceFilters,
+  onOpenDeviceFilters,
+  deviceOverrides,
+  onSelectDevice,
+}: {
+  project: Project
+  open: boolean
+  onBack: () => void
+  onClose: () => void
+  deviceFilters: ProjectDeviceFilters
+  onOpenDeviceFilters?: () => void
+  deviceOverrides?: Record<string, Partial<{ name: string }>>
+  onSelectDevice?: (deviceId: string) => void
+}) {
+  const hasCoords = !!project.coords?.length
+  const deviceDensity = hasCoords
+    ? (project.devices / Math.max(project.coords!.length, 1)).toFixed(1)
+    : '—'
 
-    return (
-      <SidePanel open={open}>
-        <div className="px-4 py-3.5 border-b border-black/[0.08] flex-shrink-0">
-          <div className="flex items-center justify-between mb-2">
-            <button
-              onClick={() => onSelectProject(null)}
-              className="flex items-center gap-1 text-xs text-neutral-400 hover:text-neutral-700 cursor-pointer bg-transparent border-none transition-colors"
-            >
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-                <path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-              Proyectos
-            </button>
-            <button onClick={onClose} className="w-6 h-6 border-none bg-transparent cursor-pointer flex items-center justify-center rounded text-neutral-400 hover:bg-black/[0.05]">
-              <CloseIcon />
-            </button>
-          </div>
-          <div className={`inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-sm mb-1.5 ${
-            selectedProject.status === 'active' ? 'bg-green-50 text-green-800' : 'bg-amber-50 text-amber-800'
-          }`}>
-            {selectedProject.status === 'active' ? 'Activo' : 'Planificado'}
-          </div>
-          <h2 className="text-xl font-medium text-black/90 leading-tight">{selectedProject.name}</h2>
-          <p className="text-[11px] text-neutral-400 mt-0.5">{selectedProject.area}</p>
+  const devices = useMemo(() => {
+    const base = generateProjectDevices(project)
+    if (!deviceOverrides) return base
+    return base.map(d => deviceOverrides[d.id] ? { ...d, ...deviceOverrides[d.id] } : d)
+  }, [project, deviceOverrides])
+  const filtered = useMemo(() => applyDeviceFilters(devices, deviceFilters), [devices, deviceFilters])
+  const activeCount = countActiveDeviceFilters(deviceFilters)
+
+  return (
+    <SidePanel open={open}>
+      <div className="px-4 py-3.5 border-b border-black/[0.08] flex-shrink-0">
+        <div className="flex items-center justify-between mb-2">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1 text-xs text-neutral-400 hover:text-neutral-700 cursor-pointer bg-transparent border-none transition-colors"
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+              <path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Proyectos
+          </button>
+          <button onClick={onClose} className="w-6 h-6 border-none bg-transparent cursor-pointer flex items-center justify-center rounded text-neutral-400 hover:bg-black/[0.05]">
+            <CloseIcon />
+          </button>
         </div>
+        <div className={`inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-sm mb-1.5 ${
+          project.status === 'active' ? 'bg-green-50 text-green-800' : 'bg-amber-50 text-amber-800'
+        }`}>
+          {project.status === 'active' ? 'Activo' : 'Planificado'}
+        </div>
+        <h2 className="text-xl font-medium text-black/90 leading-tight">{project.name}</h2>
+        <p className="text-[11px] text-neutral-400 mt-0.5">{project.area}</p>
+      </div>
 
-        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
-          {/* Stats grid */}
-          <div className="grid grid-cols-2 gap-2">
-            {[
-              { label: 'Dispositivos', value: String(selectedProject.devices) },
-              { label: 'Densidad',     value: `${deviceDensity} disp/nodo` },
-              { label: 'Estado',       value: selectedProject.status === 'active' ? 'En servicio' : 'Pendiente' },
-              { label: 'Cobertura',    value: hasCoords ? `${selectedProject.coords!.length} nodos` : '—' },
-            ].map(({ label, value }) => (
-              <div key={label} className="bg-neutral-50 rounded-lg px-3 py-2.5">
-                <div className="text-[10px] text-neutral-400 mb-0.5">{label}</div>
-                <div className="text-sm font-semibold text-neutral-900">{value}</div>
-              </div>
-            ))}
-          </div>
-
-          {/* Summary */}
-          <div>
-            <div className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-1.5">Resumen</div>
-            <p className="text-sm text-neutral-700 leading-relaxed">{selectedProject.desc}</p>
-          </div>
-
-          {/* Device / sensor types */}
-          <div>
-            <div className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-1.5">Dispositivos y sensores</div>
-            <div className="grid grid-cols-2 gap-2">
-              {deviceTypes.map(d => (
-                <div
-                  key={d.name}
-                  className={`rounded-md px-2.5 py-2 border ${d.status === 'err' ? 'bg-red-50 border-red-100' : 'bg-neutral-50 border-black/[0.05]'}`}
-                >
-                  <div className="text-xs font-medium text-neutral-900 mb-0.5">{d.name}</div>
-                  <div className={`text-[11px] ${d.status === 'err' ? 'text-red-600' : 'text-neutral-400'}`}>
-                    {d.count} uds{d.status === 'err' ? ' · Revisar' : ''}
-                  </div>
-                </div>
-              ))}
+      <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+        <div className="grid grid-cols-2 gap-2">
+          {[
+            { label: 'Dispositivos', value: String(project.devices) },
+            { label: 'Densidad',     value: `${deviceDensity} disp/nodo` },
+            { label: 'Estado',       value: project.status === 'active' ? 'En servicio' : 'Pendiente' },
+            { label: 'Cobertura',    value: hasCoords ? `${project.coords!.length} nodos` : '—' },
+          ].map(({ label, value }) => (
+            <div key={label} className="bg-neutral-50 rounded-lg px-3 py-2.5">
+              <div className="text-[10px] text-neutral-400 mb-0.5">{label}</div>
+              <div className="text-sm font-semibold text-neutral-900">{value}</div>
             </div>
+          ))}
+        </div>
+
+        <div>
+          <div className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-1.5">Resumen</div>
+          <p className="text-sm text-neutral-700 leading-relaxed">{project.desc}</p>
+        </div>
+
+        <div className="flex items-center justify-between">
+          <div className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide">Dispositivos</div>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-neutral-400">{filtered.length}/{devices.length}</span>
+            {onOpenDeviceFilters && <FiltersButton count={activeCount} onClick={onOpenDeviceFilters} />}
           </div>
         </div>
-      </SidePanel>
+
+        <div className="flex flex-col divide-y divide-black/[0.05] border border-black/[0.05] rounded-lg overflow-hidden">
+          {filtered.map(d => (
+            <div
+              key={d.id}
+              onClick={onSelectDevice ? () => onSelectDevice(d.id) : undefined}
+              className={`flex items-center gap-2 px-3 py-2 ${onSelectDevice ? 'cursor-pointer hover:bg-black/[0.02] transition-colors' : ''}`}
+            >
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-medium text-neutral-900 truncate">{d.name}</div>
+                <div className="text-[11px] text-neutral-400 truncate">
+                  {DEVICE_TYPE_LABEL[d.type]}{d.sensor ? ` · ${DEVICE_SENSOR_LABEL[d.sensor]}` : ''}
+                </div>
+              </div>
+              <div className="flex items-center gap-1 flex-shrink-0">
+                {d.incident && (
+                  <span className="inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-sm bg-amber-50 text-amber-800">Incidencia</span>
+                )}
+                {d.alert && (
+                  <span className="inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-sm bg-red-50 text-red-700">Alerta</span>
+                )}
+              </div>
+            </div>
+          ))}
+          {filtered.length === 0 && (
+            <div className="text-xs text-neutral-400 px-3 py-4 text-center">
+              Sin dispositivos que coincidan con los filtros
+            </div>
+          )}
+        </div>
+      </div>
+    </SidePanel>
+  )
+}
+
+export function ProjectsPanel({
+  open,
+  projects,
+  selectedProject,
+  onSelectProject,
+  onClose,
+  onOpenFilters,
+  activeFilterCount = 0,
+  deviceFilters,
+  onOpenDeviceFilters,
+  deviceOverrides,
+  onSelectDevice,
+}: ProjectsPanelProps) {
+  if (selectedProject) {
+    return (
+      <ProjectDetail
+        project={selectedProject}
+        open={open}
+        onBack={() => onSelectProject(null)}
+        onClose={onClose}
+        deviceFilters={deviceFilters ?? { types: [], sensors: [], flags: [] }}
+        onOpenDeviceFilters={onOpenDeviceFilters}
+        deviceOverrides={deviceOverrides}
+        onSelectDevice={onSelectDevice}
+      />
     )
   }
 
@@ -113,22 +203,7 @@ export function ProjectsPanel({ open, projects, selectedProject, onSelectProject
             </p>
           </div>
           <div className="flex items-center gap-1">
-            {onOpenFilters && (
-              <button
-                onClick={onOpenFilters}
-                className="flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-black/10 bg-white text-neutral-700 cursor-pointer hover:bg-black/[0.03] transition-colors"
-              >
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-                  <path d="M2 4h12M4 8h8M6 12h4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-                </svg>
-                Filtros
-                {activeFilterCount > 0 && (
-                  <span className="ml-0.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-neutral-900 text-white text-[10px] font-medium">
-                    {activeFilterCount}
-                  </span>
-                )}
-              </button>
-            )}
+            {onOpenFilters && <FiltersButton count={activeFilterCount} onClick={onOpenFilters} />}
             <button onClick={onClose} className="w-6 h-6 border-none bg-transparent cursor-pointer flex items-center justify-center rounded text-neutral-400 hover:bg-black/[0.05]">
               <CloseIcon />
             </button>

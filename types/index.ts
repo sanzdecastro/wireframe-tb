@@ -69,4 +69,14 @@ export interface MapLayer {
 
 export type AppView = 'home' | 'map'
 export type MapMode = 'explorar' | 'proyectos'
-export type SidePanel = 'none' | 'kpi' | 'zone' | 'projects' | 'layers' | 'filters'
+export type SidePanel = 'none' | 'kpi' | 'zone' | 'projects' | 'layers' | 'filters' | 'device-filters' | 'device'
+
+export type ProjectDeviceType = 'iluminacion' | 'mobiliario' | 'jardineras'
+export type ProjectDeviceSensor = 'movimiento' | 'x' | 'y'
+export type ProjectDeviceFlag = 'incident' | 'alert'
+
+export interface ProjectDeviceFilters {
+  types:   ProjectDeviceType[]
+  sensors: ProjectDeviceSensor[]
+  flags:   ProjectDeviceFlag[]
+}

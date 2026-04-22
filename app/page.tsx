@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useMemo } from 'react'
-import { KPI, Project, AppView, MapMode, SidePanel, ProjectFilters } from '@/types'
+import { KPI, Project, AppView, MapMode, SidePanel, ProjectFilters, ProjectDeviceFilters } from '@/types'
 import { DEFAULT_KPIS, DEFAULT_PROJECTS } from '@/lib/data'
 
 import { Navbar }         from '@/components/layout/Navbar'
@@ -13,6 +13,9 @@ import { ZonePanel }      from '@/components/panels/ZonePanel'
 import { ProjectsPanel }  from '@/components/panels/ProjectsPanel'
 import { LayersPanel }    from '@/components/panels/LayersPanel'
 import { ProjectFiltersPanel, EMPTY_FILTERS, countActiveFilters } from '@/components/panels/ProjectFiltersPanel'
+import { ProjectDeviceFiltersPanel } from '@/components/panels/ProjectDeviceFiltersPanel'
+import { DevicePanel } from '@/components/panels/DevicePanel'
+import { EMPTY_DEVICE_FILTERS, generateProjectDevices } from '@/lib/projectDevices'
 
 export default function Home() {
   const [view, setView]           = useState<AppView>('home')
@@ -26,6 +29,22 @@ export default function Home() {
   const [cyclingLayerVisible, setCyclingLayerVisible] = useState(false)
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [projectFilters, setProjectFilters] = useState<ProjectFilters>(EMPTY_FILTERS)
+  const [deviceFilters, setDeviceFilters] = useState<ProjectDeviceFilters>(EMPTY_DEVICE_FILTERS)
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
+  const [deviceNameOverrides, setDeviceNameOverrides] = useState<Record<string, string>>({})
+
+  const deviceOverrides = useMemo(() => {
+    const out: Record<string, { name: string }> = {}
+    for (const [id, name] of Object.entries(deviceNameOverrides)) out[id] = { name }
+    return out
+  }, [deviceNameOverrides])
+
+  const selectedDevice = useMemo(() => {
+    if (!selectedProject || !selectedDeviceId) return null
+    const d = generateProjectDevices(selectedProject).find(x => x.id === selectedDeviceId) ?? null
+    if (d && deviceNameOverrides[d.id]) return { ...d, name: deviceNameOverrides[d.id] }
+    return d
+  }, [selectedProject, selectedDeviceId, deviceNameOverrides])
 
   const filteredProjects = useMemo(() => projects.filter(p => {
     if (projectFilters.taxonomy.length  && !projectFilters.taxonomy.includes(p.taxonomy  ?? 'proyecto')) return false
@@ -207,16 +226,40 @@ export default function Home() {
               open={panel === 'projects'}
               projects={filteredProjects}
               selectedProject={selectedProject}
-              onSelectProject={(p) => { setSelectedProject(p); if (p) handleProjectClick(p) }}
-              onClose={() => { setPanel('none'); setSelectedProject(null) }}
+              onSelectProject={(p) => {
+                setSelectedProject(p)
+                setSelectedDeviceId(null)
+                if (p) handleProjectClick(p)
+                else setDeviceFilters(EMPTY_DEVICE_FILTERS)
+              }}
+              onClose={() => { setPanel('none'); setSelectedProject(null); setDeviceFilters(EMPTY_DEVICE_FILTERS); setSelectedDeviceId(null) }}
               onOpenFilters={() => setPanel('filters')}
               activeFilterCount={activeFilterCount}
+              deviceFilters={deviceFilters}
+              onOpenDeviceFilters={() => setPanel('device-filters')}
+              deviceOverrides={deviceOverrides}
+              onSelectDevice={(id) => { setSelectedDeviceId(id); setPanel('device') }}
             />
             <ProjectFiltersPanel
               open={panel === 'filters'}
               filters={projectFilters}
               onChange={setProjectFilters}
               onClose={() => setPanel('projects')}
+            />
+            <ProjectDeviceFiltersPanel
+              open={panel === 'device-filters'}
+              project={selectedProject}
+              filters={deviceFilters}
+              onChange={setDeviceFilters}
+              onClose={() => setPanel('projects')}
+            />
+            <DevicePanel
+              open={panel === 'device'}
+              device={selectedDevice}
+              projectName={selectedProject?.name}
+              onRename={(id, name) => setDeviceNameOverrides(prev => ({ ...prev, [id]: name }))}
+              onClose={() => { setPanel('none'); setSelectedProject(null); setSelectedDeviceId(null); setDeviceFilters(EMPTY_DEVICE_FILTERS) }}
+              onBack={() => { setPanel('projects'); setSelectedDeviceId(null) }}
             />
             <LayersPanel
               open={panel === 'layers'}
