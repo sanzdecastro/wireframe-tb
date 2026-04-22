@@ -1,0 +1,41 @@
+@import 'mapbox-gl/dist/mapbox-gl.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground: #111111;
+  --background: #f9f9f9;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Mapbox popup customization */
+.mapboxgl-popup-content {
+  padding: 8px 12px !important;
+  border-radius: 6px !important;
+  border: 0.5px solid rgba(0,0,0,0.12) !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08) !important;
+  font-family: -apple-system, 'SF Pro Text', sans-serif !important;
+}
+.mapboxgl-popup-tip { display: none !important; }
+
+/* Mapbox nav control */
+.mapboxgl-ctrl-group {
+  border-radius: 6px !important;
+  border: 0.5px solid rgba(0,0,0,0.12) !important;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08) !important;
+}
+.mapboxgl-ctrl-group button {
+  width: 30px !important;
+  height: 30px !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 2px; }
