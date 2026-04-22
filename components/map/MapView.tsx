@@ -101,7 +101,9 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
     if (!containerRef.current || mapRef.current) return
     import('mapbox-gl').then(({ default: mapboxgl }) => {
       mapboxglRef.current = mapboxgl
-      mapboxgl.accessToken = MAPBOX_TOKEN
+
+      mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!
+      
       const map = new mapboxgl.Map({
         container: containerRef.current!,
         style: 'mapbox://styles/mapbox/light-v11',
