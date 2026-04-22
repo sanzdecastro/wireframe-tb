@@ -32,30 +32,34 @@ export function MapControls({ mode, drawMode, onModeChange, onDrawToggle, onLaye
 
       {/* Actions bar — only in explorar */}
       {mode === 'explorar' && (
-        <div className="bg-white border border-black/15 rounded-md flex items-center gap-0.5 p-1 shadow-sm">
+        <div className="bg-white border  border-black/15 rounded-md flex items-center gap-0.5 p-1 shadow-sm">
           <button
             onClick={onDrawToggle}
             title="Dibujar área"
-            className={`w-7 h-7 border-none rounded flex items-center justify-center cursor-pointer transition-colors ${
+            className={`w-fit px-3 gap-2 text-xs h-7 border-none rounded flex items-center justify-center cursor-pointer transition-colors ${
               drawMode ? 'bg-neutral-900 text-white' : 'bg-transparent text-neutral-500 hover:bg-black/[0.05]'
             }`}
           >
+            
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
               <path d="M2 14l3-1 8-8-2-2-8 8-1 3z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
               <path d="M11 3l2 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
             </svg>
+            Dibujar área
           </button>
           <div className="w-px h-4 bg-black/12 mx-0.5" />
           <button
             onClick={onLayersOpen}
             title="Capas"
-            className="w-7 h-7 border-none rounded flex items-center justify-center cursor-pointer transition-colors bg-transparent text-neutral-500 hover:bg-black/[0.05]"
+            className="w-fit h-7 px-3 gap-2 text-xs border-none rounded flex items-center justify-center cursor-pointer transition-colors bg-transparent text-neutral-500 hover:bg-black/[0.05]"
           >
+            
             <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" className="text-neutral-500">
               <circle cx="2" cy="8" r="1.5" />
               <circle cx="8" cy="8" r="1.5" />
               <circle cx="14" cy="8" r="1.5" />
             </svg>
+            Mostrar capas
           </button>
         </div>
       )}
