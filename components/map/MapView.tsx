@@ -26,9 +26,10 @@ interface MapViewProps {
   onZoneComplete: (coords: number[][]) => void
   onProjectClick: (project: Project) => void
   heatmapVisible?: boolean
+  cyclingLayerVisible?: boolean
 }
 
-export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedProjectId, onZoneComplete, onProjectClick, heatmapVisible = false }: MapViewProps) {
+export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedProjectId, onZoneComplete, onProjectClick, heatmapVisible = false, cyclingLayerVisible = false, }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
   const mapboxglRef = useRef<any>(null)
@@ -95,6 +96,68 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
     if (map.getLayer('draw-fill')) map.removeLayer('draw-fill')
     if (map.getSource('draw-source')) map.removeSource('draw-source')
   }, [])
+
+
+  const ensureCyclingLayer = useCallback(() => {
+    const map = mapRef.current
+    if (!map || !map.isStyleLoaded()) return
+
+    if (!map.getSource('cycling-tiles')) {
+      map.addSource('cycling-tiles', {
+        type: 'raster',
+        tiles: [
+          'https://a.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png',
+          'https://b.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png',
+          'https://c.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png',
+        ],
+        tileSize: 256,
+        attribution:
+          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, ' +
+          'rendering <a href="https://cyclosm.org/">CyclOSM</a>',
+      })
+    }
+
+    if (!map.getLayer('cycling-tiles-layer')) {
+      const beforeId = map.getLayer('sensors-dots') ? 'sensors-dots' : undefined
+
+      map.addLayer(
+        {
+          id: 'cycling-tiles-layer',
+          type: 'raster',
+          source: 'cycling-tiles',
+          layout: {
+            visibility: cyclingLayerVisible ? 'visible' : 'none',
+          },
+          paint: {
+            'raster-opacity': 0.75,
+          },
+        },
+        beforeId
+      )
+    } else {
+      map.setLayoutProperty(
+        'cycling-tiles-layer',
+        'visibility',
+        cyclingLayerVisible ? 'visible' : 'none'
+      )
+    }
+  }, [cyclingLayerVisible])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+
+    const syncCyclingLayer = () => {
+      ensureCyclingLayer()
+    }
+
+    if (map.isStyleLoaded()) {
+      syncCyclingLayer()
+    } else {
+      map.once('load', syncCyclingLayer)
+      return () => map.off('load', syncCyclingLayer)
+    }
+  }, [ensureCyclingLayer])
 
   // Init map
   useEffect(() => {
@@ -197,6 +260,8 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
             'icon-size': 1,
           },
         })
+
+        ensureCyclingLayer()
 
         map.on('click', 'sensors-icons', (e: any) => {
           if (!e.features?.length) return

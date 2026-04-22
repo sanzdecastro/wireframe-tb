@@ -6,9 +6,7 @@ export const DEFAULT_KPIS: KPI[] = [
   { id: 'afluencia', label: 'Afluencia',  value: '43%',   trend: 'down', delta: '12.8%', on: true  },
   { id: 'cobertura', label: 'Cobertura',  value: '50%',   trend: 'up',   delta: '8.8%',  on: true  },
   { id: 'proyectos', label: 'Proyectos',  value: '23',    trend: 'up',   delta: '8.8%',  on: true  },
-  { id: 'capex',     label: 'CapEx',      value: '$94k',  trend: 'up',   delta: '8.8%',  on: false },
-  { id: 'mrr',       label: 'MRR',        value: '$350K', trend: 'up',   delta: '4.1%',  on: false },
-  { id: 'opex',      label: 'OpEx',       value: '$211K', trend: 'down', delta: '2.3%',  on: false },
+  
 ]
 
 const rng = (seed: number) => { const x = Math.sin(seed * 9301 + 49297) * 233280; return x - Math.floor(x) }

@@ -23,7 +23,19 @@ export default function Home() {
   const [drawMode, setDrawMode]             = useState(false)
   const [pendingCoords, setPendingCoords]   = useState<number[][]>([])
   const [heatmapVisible, setHeatmapVisible] = useState(false)
+  const [cyclingLayerVisible, setCyclingLayerVisible] = useState(false)
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
+  const [projectFilters, setProjectFilters] = useState<ProjectFilters>(EMPTY_FILTERS)
+
+  const filteredProjects = useMemo(() => projects.filter(p => {
+    if (projectFilters.taxonomy.length  && !projectFilters.taxonomy.includes(p.taxonomy  ?? 'proyecto')) return false
+    if (projectFilters.districts.length && (!p.district || !projectFilters.districts.includes(p.district))) return false
+    if (projectFilters.devices.length   && !projectFilters.devices.some(d => p.deviceCategories?.includes(d))) return false
+    if (projectFilters.sensors.length   && !projectFilters.sensors.some(s => p.sensorCategories?.includes(s))) return false
+    return true
+  }), [projects, projectFilters])
+
+  const activeFilterCount = countActiveFilters(projectFilters)
 
   const handleExplore = () => {
     setView('map')
@@ -84,6 +96,10 @@ export default function Home() {
   const handleCloseZone = () => {
     setPanel('none')
     setPendingCoords([])
+  }
+
+  const onCyclingLayerToggle = () => {
+    setCyclingLayerVisible(v => !v)
   }
 
   return (
@@ -150,6 +166,8 @@ export default function Home() {
               onZoneComplete={handleZoneComplete}
               onProjectClick={handleProjectClick}
               heatmapVisible={heatmapVisible}
+              cyclingLayerVisible={cyclingLayerVisible}
+              
             />
 
             <MapControls
@@ -187,16 +205,26 @@ export default function Home() {
             />
             <ProjectsPanel
               open={panel === 'projects'}
-              projects={projects}
+              projects={filteredProjects}
               selectedProject={selectedProject}
               onSelectProject={(p) => { setSelectedProject(p); if (p) handleProjectClick(p) }}
               onClose={() => { setPanel('none'); setSelectedProject(null) }}
+              onOpenFilters={() => setPanel('filters')}
+              activeFilterCount={activeFilterCount}
+            />
+            <ProjectFiltersPanel
+              open={panel === 'filters'}
+              filters={projectFilters}
+              onChange={setProjectFilters}
+              onClose={() => setPanel('projects')}
             />
             <LayersPanel
               open={panel === 'layers'}
               heatmapVisible={heatmapVisible}
+              cyclingLayerVisible={cyclingLayerVisible}
               onClose={() => setPanel('none')}
               onHeatmapToggle={() => setHeatmapVisible(v => !v)}
+              onCyclingLayerToggle={onCyclingLayerToggle}
             />
         </div>
       )}
