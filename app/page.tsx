@@ -121,6 +121,25 @@ export default function Home() {
     setCyclingLayerVisible(v => !v)
   }
 
+  const handleSensorClick = useCallback((label: string, kind: string, sensorType: string, lng: number, lat: number) => {
+    const containingProject = projects.find(p => {
+      const [px, py] = [lng, lat]
+      let inside = false
+      for (let i = 0, j = p.coords.length - 1; i < p.coords.length; j = i++) {
+        const [xi, yi] = p.coords[i]
+        const [xj, yj] = p.coords[j]
+        if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside
+      }
+      return inside
+    }) ?? projects[0]
+    if (!containingProject) return
+    const devices = generateProjectDevices(containingProject)
+    if (!devices.length) return
+    setSelectedProject(containingProject)
+    setSelectedDeviceId(devices[0].id)
+    setPanel('device')
+  }, [projects])
+
   return (
     <div className="h-screen flex flex-col bg-neutral-100 overflow-hidden">
       <Navbar
@@ -184,9 +203,9 @@ export default function Home() {
               selectedProjectId={selectedProject?.id ?? null}
               onZoneComplete={handleZoneComplete}
               onProjectClick={handleProjectClick}
+              onSensorClick={handleSensorClick}
               heatmapVisible={heatmapVisible}
               cyclingLayerVisible={cyclingLayerVisible}
-              
             />
 
             <MapControls
