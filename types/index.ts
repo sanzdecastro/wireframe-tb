@@ -8,6 +8,7 @@ export interface KPI {
 }
 
 export interface Sensor {
+  id: string
   lng: number
   lat: number
   type: 'ok' | 'err'

@@ -8,9 +8,11 @@ import { SidePanel, CloseIcon, Toggle } from '@/components/ui'
 interface LayersPanelProps {
   open: boolean
   heatmapVisible: boolean
+  temperaturaVisible: boolean
   cyclingLayerVisible: boolean
   onClose: () => void
   onHeatmapToggle: () => void
+  onTemperaturaToggle: () => void
   onCyclingLayerToggle: () => void
 }
 
@@ -51,7 +53,7 @@ function UploadIcon() {
 const VIZ_TYPES: VizType[] = ['puntos', 'líneas', 'heatmap']
 const CONTEXTS = ['Ciudad', 'Distrito', 'Barrio', 'Zona de proyecto']
 
-export function LayersPanel({ open, heatmapVisible, cyclingLayerVisible, onClose, onHeatmapToggle, onCyclingLayerToggle, }: LayersPanelProps) {
+export function LayersPanel({ open, heatmapVisible, temperaturaVisible, cyclingLayerVisible, onClose, onHeatmapToggle, onTemperaturaToggle, onCyclingLayerToggle, }: LayersPanelProps) {
   const [step, setStep]           = useState<Step>('list')
   const [activeTab, setActiveTab] = useState<'sistema' | 'externas'>('sistema')
   const [layers, setLayers]       = useState<MapLayer[]>(DEFAULT_LAYERS)
@@ -67,14 +69,15 @@ export function LayersPanel({ open, heatmapVisible, cyclingLayerVisible, onClose
 
   const toggleLayer = (id: string) => {
     if (id === 'afluencia') onHeatmapToggle()
-      if (id === 'bici') onCyclingLayerToggle()
+    if (id === 'temperatura') onTemperaturaToggle()
+    if (id === 'bici') onCyclingLayerToggle()
     setLayers(prev => prev.map(l => l.id === id ? { ...l, active: !l.active } : l))
   }
 
-  // Sync afluencia with external heatmapVisible
   const visibleLayers = layers.map(l => {
-    if (l.id === 'afluencia') return { ...l, active: heatmapVisible }
-    if (l.id === 'bici') return { ...l, active: cyclingLayerVisible }
+    if (l.id === 'afluencia')   return { ...l, active: heatmapVisible }
+    if (l.id === 'temperatura') return { ...l, active: temperaturaVisible }
+    if (l.id === 'bici')        return { ...l, active: cyclingLayerVisible }
     return l
   })
 

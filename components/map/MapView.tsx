@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useCallback } from 'react'
-import { MAPBOX_TOKEN, SENSORS, MAP_CENTER, MAP_ZOOM, AFLUENCIA_DATA } from '@/lib/data'
+import { MAPBOX_TOKEN, SENSORS, MAP_CENTER, MAP_ZOOM, AFLUENCIA_DATA, TEMPERATURA_DATA } from '@/lib/data'
 import { Project, MapMode } from '@/types'
 
 function pointInPolygon(point: number[], polygon: number[][]): boolean {
@@ -33,13 +33,14 @@ interface MapViewProps {
   selectedProjectId: string | null
   onZoneComplete: (coords: number[][]) => void
   onProjectClick: (project: Project) => void
-  onSensorClick?: (label: string, kind: string, sensorType: string, lng: number, lat: number) => void
+  onSensorClick?: (id: string) => void
   heatmapVisible?: boolean
+  temperaturaVisible?: boolean
   cyclingLayerVisible?: boolean
   projectDeviceMarkers?: ProjectDeviceMarker[] | null
 }
 
-export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedProjectId, onZoneComplete, onProjectClick, onSensorClick, heatmapVisible = false, cyclingLayerVisible = false, projectDeviceMarkers = null }: MapViewProps) {
+export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedProjectId, onZoneComplete, onProjectClick, onSensorClick, heatmapVisible = false, temperaturaVisible = false, cyclingLayerVisible = false, projectDeviceMarkers = null }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
   const mapboxglRef = useRef<any>(null)
@@ -245,7 +246,7 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
             features: SENSORS.map(s => ({
               type: 'Feature',
               geometry: { type: 'Point', coordinates: [s.lng, s.lat] },
-              properties: { type: s.type, kind: s.kind, label: s.label },
+              properties: { id: s.id, type: s.type, kind: s.kind, label: s.label },
             })),
           },
         })
@@ -278,9 +279,8 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
 
         const handleSensorFeatureClick = (e: any) => {
           if (!e.features?.length) return
-          const { label, kind, type } = e.features[0].properties
-          const [lng, lat] = e.features[0].geometry.coordinates
-          onSensorClickRef.current?.(label, kind, type, lng, lat)
+          const { id } = e.features[0].properties
+          onSensorClickRef.current?.(id)
         }
         map.on('click', 'sensors-icons', handleSensorFeatureClick)
         map.on('mouseenter', 'sensors-icons', () => { map.getCanvas().style.cursor = 'pointer' })
@@ -379,6 +379,61 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
       map.once('load', addHeatmap)
     }
   }, [heatmapVisible])
+
+  // Heatmap temperatura
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+
+    const addTemperaturaHeatmap = () => {
+      if (temperaturaVisible) {
+        if (map.getLayer('temperatura-heat')) return
+        if (!map.getSource('temperatura')) {
+          map.addSource('temperatura', {
+            type: 'geojson',
+            data: {
+              type: 'FeatureCollection',
+              features: TEMPERATURA_DATA.map(d => ({
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: [d.lng, d.lat] },
+                properties: { temperatura: d.temperatura },
+              })),
+            },
+          })
+        }
+        const beforeId = map.getLayer('sensors-dots') ? 'sensors-dots' : undefined
+        map.addLayer({
+          id: 'temperatura-heat',
+          type: 'heatmap',
+          source: 'temperatura',
+          paint: {
+            'heatmap-weight': ['interpolate', ['linear'], ['get', 'temperatura'], 14, 0, 34, 1],
+            'heatmap-intensity': 1.2,
+            'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 10, 25, 15, 50],
+            'heatmap-opacity': 0.75,
+            'heatmap-color': [
+              'interpolate', ['linear'], ['heatmap-density'],
+              0,    'rgba(0,0,0,0)',
+              0.15, '#313695',
+              0.35, '#74add1',
+              0.55, '#fee090',
+              0.75, '#f46d43',
+              1,    '#a50026',
+            ],
+          },
+        }, beforeId)
+      } else {
+        if (map.getLayer('temperatura-heat')) map.removeLayer('temperatura-heat')
+        if (map.getSource('temperatura')) map.removeSource('temperatura')
+      }
+    }
+
+    if (map.isStyleLoaded()) {
+      addTemperaturaHeatmap()
+    } else {
+      map.once('load', addTemperaturaHeatmap)
+    }
+  }, [temperaturaVisible])
 
   // Cursor on draw mode change
   useEffect(() => {

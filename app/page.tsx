@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo } from 'react'
 import { KPI, Project, AppView, MapMode, SidePanel, ProjectFilters, ProjectDeviceFilters } from '@/types'
-import { DEFAULT_KPIS, DEFAULT_PROJECTS } from '@/lib/data'
+import { DEFAULT_KPIS, DEFAULT_PROJECTS, SENSORS_BY_ID } from '@/lib/data'
 
 import { Navbar }         from '@/components/layout/Navbar'
 import { KpiBadge }       from '@/components/ui'
@@ -15,7 +15,7 @@ import { LayersPanel }    from '@/components/panels/LayersPanel'
 import { ProjectFiltersPanel, EMPTY_FILTERS, countActiveFilters } from '@/components/panels/ProjectFiltersPanel'
 import { ProjectDeviceFiltersPanel } from '@/components/panels/ProjectDeviceFiltersPanel'
 import { DevicePanel } from '@/components/panels/DevicePanel'
-import { EMPTY_DEVICE_FILTERS, generateProjectDevices, applyDeviceFilters } from '@/lib/projectDevices'
+import { EMPTY_DEVICE_FILTERS, generateProjectDevices, applyDeviceFilters, ProjectDevice } from '@/lib/projectDevices'
 
 export default function Home() {
   const [view, setView]           = useState<AppView>('home')
@@ -26,11 +26,13 @@ export default function Home() {
   const [drawMode, setDrawMode]             = useState(false)
   const [pendingCoords, setPendingCoords]   = useState<number[][]>([])
   const [heatmapVisible, setHeatmapVisible] = useState(false)
+  const [temperaturaVisible, setTemperaturaVisible] = useState(false)
   const [cyclingLayerVisible, setCyclingLayerVisible] = useState(false)
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [projectFilters, setProjectFilters] = useState<ProjectFilters>(EMPTY_FILTERS)
   const [deviceFilters, setDeviceFilters] = useState<ProjectDeviceFilters>(EMPTY_DEVICE_FILTERS)
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
+  const [selectedDirectDevice, setSelectedDirectDevice] = useState<ProjectDevice | null>(null)
   const [deviceNameOverrides, setDeviceNameOverrides] = useState<Record<string, string>>({})
 
   const deviceOverrides = useMemo(() => {
@@ -133,25 +135,30 @@ export default function Home() {
     setCyclingLayerVisible(v => !v)
   }
 
-  const handleSensorClick = useCallback((label: string, kind: string, sensorType: string, lng: number, lat: number) => {
-    const containingProject = projects.find(p => {
-      if (!p.coords || p.coords.length < 3) return false
-      const [px, py] = [lng, lat]
-      let inside = false
-      for (let i = 0, j = p.coords.length - 1; i < p.coords.length; j = i++) {
-        const [xi, yi] = p.coords[i]
-        const [xj, yj] = p.coords[j]
-        if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside
-      }
-      return inside
-    }) ?? projects[0]
-    if (!containingProject) return
-    const devices = generateProjectDevices(containingProject)
-    if (!devices.length) return
-    setSelectedProject(containingProject)
-    setSelectedDeviceId(devices[0].id)
+  const handleSensorClick = useCallback((id: string) => {
+    const entry = SENSORS_BY_ID[id]
+    if (!entry) return
+    const { properties: props, coordinates } = entry
+    const SENSOR_MAP: Record<string, 'movimiento' | 'x' | 'y' | null> = { movimiento: 'movimiento', x: 'x', y: 'y' }
+    const device: ProjectDevice = {
+      id:       props.id,
+      name:     props.name,
+      type:     props.type as ProjectDevice['type'],
+      sensor:   SENSOR_MAP[props.sensor] ?? null,
+      incident: props.incident,
+      alert:    props.alert,
+      status:   props.status === 'online' ? 'online' : 'offline',
+      lastSeen: props.lastSeen,
+      model:    props.model,
+      address:  props.address,
+      lng:      coordinates[0],
+      lat:      coordinates[1],
+    }
+    setSelectedDirectDevice(device)
+    setSelectedProject(null)
+    setSelectedDeviceId(null)
     setPanel('device')
-  }, [projects])
+  }, [])
 
   return (
     <div className="h-screen flex flex-col bg-neutral-100 overflow-hidden">
@@ -218,6 +225,7 @@ export default function Home() {
               onProjectClick={handleProjectClick}
               onSensorClick={handleSensorClick}
               heatmapVisible={heatmapVisible}
+              temperaturaVisible={temperaturaVisible}
               cyclingLayerVisible={cyclingLayerVisible}
               projectDeviceMarkers={projectDeviceMarkers}
             />
@@ -288,18 +296,20 @@ export default function Home() {
             />
             <DevicePanel
               open={panel === 'device'}
-              device={selectedDevice}
+              device={selectedDirectDevice ?? selectedDevice}
               projectName={selectedProject?.name}
               onRename={(id, name) => setDeviceNameOverrides(prev => ({ ...prev, [id]: name }))}
-              onClose={() => { setPanel('none'); setSelectedProject(null); setSelectedDeviceId(null); setDeviceFilters(EMPTY_DEVICE_FILTERS) }}
-              onBack={() => { setPanel('projects'); setSelectedDeviceId(null) }}
+              onClose={() => { setPanel('none'); setSelectedProject(null); setSelectedDeviceId(null); setSelectedDirectDevice(null); setDeviceFilters(EMPTY_DEVICE_FILTERS) }}
+              onBack={() => { setPanel(selectedDirectDevice ? 'none' : 'projects'); setSelectedDeviceId(null); setSelectedDirectDevice(null) }}
             />
             <LayersPanel
               open={panel === 'layers'}
               heatmapVisible={heatmapVisible}
+              temperaturaVisible={temperaturaVisible}
               cyclingLayerVisible={cyclingLayerVisible}
               onClose={() => setPanel('none')}
               onHeatmapToggle={() => setHeatmapVisible(v => !v)}
+              onTemperaturaToggle={() => setTemperaturaVisible(v => !v)}
               onCyclingLayerToggle={onCyclingLayerToggle}
             />
         </div>

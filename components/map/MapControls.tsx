@@ -54,10 +54,10 @@ export function MapControls({ mode, drawMode, onModeChange, onDrawToggle, onLaye
             className="w-fit h-7 px-3 gap-2 text-xs border-none rounded flex items-center justify-center cursor-pointer transition-colors bg-transparent text-neutral-500 hover:bg-black/[0.05]"
           >
             
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" className="text-neutral-500">
-              <circle cx="2" cy="8" r="1.5" />
-              <circle cx="8" cy="8" r="1.5" />
-              <circle cx="14" cy="8" r="1.5" />
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-500">
+              <path d="M1 11.5l7 3 7-3"/>
+              <path d="M1 8l7 3 7-3"/>
+              <path d="M1 4.5l7-3 7 3-7 3-7-3z"/>
             </svg>
             Mostrar capas
           </button>

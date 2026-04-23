@@ -1,4 +1,5 @@
 import { KPI, Sensor, Project, KpiCatalogCategory, MapLayer } from '@/types'
+import dispositivosGeoJson from './dispositivos_1000.json'
 
 export const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
 export const DEFAULT_KPIS: KPI[] = [
@@ -9,19 +10,24 @@ export const DEFAULT_KPIS: KPI[] = [
   
 ]
 
-const rng = (seed: number) => { const x = Math.sin(seed * 9301 + 49297) * 233280; return x - Math.floor(x) }
-const KINDS: Sensor['kind'][] = ['banco', 'luminaria', 'jardinera']
-const KIND_LABELS = { banco: 'Banco', luminaria: 'Luminaria', jardinera: 'Jardinera' }
-const KIND_PREFIXES = { banco: 'B', luminaria: 'L', jardinera: 'J' }
+export const SENSORS: Sensor[] = dispositivosGeoJson.features.map(f => ({
+  id:    f.properties.id,
+  lng:   f.geometry.coordinates[0],
+  lat:   f.geometry.coordinates[1],
+  type:  f.properties.status === 'online' ? 'ok' : 'err' as Sensor['type'],
+  kind:  (f.properties.kind ?? 'luminaria') as Sensor['kind'],
+  label: f.properties.name,
+}))
 
-export const SENSORS: Sensor[] = Array.from({ length: 1000 }, (_, i) => {
-  const lng = 2.085 + rng(i * 3 + 1) * 0.148
-  const lat = 41.340 + rng(i * 7 + 2) * 0.105
-  const kind = KINDS[rng(i * 11 + 3) < 0.35 ? 0 : rng(i * 11 + 3) < 0.75 ? 1 : 2]
-  const type: Sensor['type'] = rng(i * 13 + 4) < 0.87 ? 'ok' : 'err'
-  const num = String(i + 1).padStart(4, '0')
-  return { lng, lat, type, kind, label: `${KIND_LABELS[kind]} ${KIND_PREFIXES[kind]}-${num}` }
-})
+export const SENSORS_BY_ID: Record<string, { properties: typeof dispositivosGeoJson.features[0]['properties']; coordinates: [number, number] }> =
+  Object.fromEntries(dispositivosGeoJson.features.map(f => [f.properties.id, { properties: f.properties, coordinates: f.geometry.coordinates as [number, number] }]))
+
+export const TEMPERATURA_DATA: { lng: number; lat: number; temperatura: number }[] =
+  dispositivosGeoJson.features.map(f => ({
+    lng: f.geometry.coordinates[0],
+    lat: f.geometry.coordinates[1],
+    temperatura: f.properties.temperatura,
+  }))
 
 export const DEFAULT_PROJECTS: Project[] = [
   {
@@ -196,6 +202,7 @@ export const KPI_CATALOG: KpiCatalogCategory[] = [
 export const DEFAULT_LAYERS: MapLayer[] = [
   { id: 'sensores',     label: 'Sensores IoT',         type: 'puntos',  tab: 'sistema',   active: true  },
   { id: 'afluencia',    label: 'Afluencia peatonal',   type: 'heatmap', tab: 'sistema',   active: false },
+  { id: 'temperatura',  label: 'Temperatura',          type: 'heatmap', tab: 'sistema',   active: false },
   { id: 'zonas',        label: 'Áreas de proyecto',    type: 'líneas',  tab: 'sistema',   active: true  },
   { id: 'zonificacion', label: 'Zonificación urbana',  type: 'líneas',  tab: 'externas',  active: false, source: 'OpenData BCN' },
   { id: 'bus',          label: 'Paradas de bus',       type: 'puntos',  tab: 'externas',  active: false, source: 'TMB API'      },
