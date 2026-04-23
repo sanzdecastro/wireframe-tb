@@ -17,6 +17,14 @@ function pointInPolygon(point: number[], polygon: number[][]): boolean {
   return inside
 }
 
+export interface ProjectDeviceMarker {
+  lng: number
+  lat: number
+  type: 'ok' | 'err'
+  kind: 'banco' | 'luminaria' | 'jardinera'
+  label: string
+}
+
 interface MapViewProps {
   drawMode: boolean
   mapMode: MapMode
@@ -27,9 +35,10 @@ interface MapViewProps {
   onProjectClick: (project: Project) => void
   heatmapVisible?: boolean
   cyclingLayerVisible?: boolean
+  projectDeviceMarkers?: ProjectDeviceMarker[] | null
 }
 
-export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedProjectId, onZoneComplete, onProjectClick, heatmapVisible = false, cyclingLayerVisible = false, }: MapViewProps) {
+export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedProjectId, onZoneComplete, onProjectClick, heatmapVisible = false, cyclingLayerVisible = false, projectDeviceMarkers = null }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
   const mapboxglRef = useRef<any>(null)
@@ -388,7 +397,7 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
     else map.once('load', toggle)
   }, [mapMode, selectedProjectId])
 
-  // Filtrar sensores al polígono del proyecto seleccionado
+  // Filtrar sensores al polígono del proyecto seleccionado (o usar device markers filtrados)
   useEffect(() => {
     const map = mapRef.current
     if (!map || !map.isStyleLoaded()) return
@@ -396,22 +405,32 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
     if (!source) return
 
     const p = selectedProjectId ? projects.find(pr => pr.id === selectedProjectId) : null
-    const features = (p?.coords && p.coords.length >= 3)
-      ? SENSORS
-          .filter(s => pointInPolygon([s.lng, s.lat], p.coords!))
-          .map(s => ({
-            type: 'Feature' as const,
-            geometry: { type: 'Point' as const, coordinates: [s.lng, s.lat] },
-            properties: { type: s.type, kind: s.kind, label: s.label },
-          }))
-      : SENSORS.map(s => ({
+
+    let features: any[]
+    if (p && projectDeviceMarkers) {
+      features = projectDeviceMarkers.map(m => ({
+        type: 'Feature' as const,
+        geometry: { type: 'Point' as const, coordinates: [m.lng, m.lat] },
+        properties: { type: m.type, kind: m.kind, label: m.label },
+      }))
+    } else if (p?.coords && p.coords.length >= 3) {
+      features = SENSORS
+        .filter(s => pointInPolygon([s.lng, s.lat], p.coords!))
+        .map(s => ({
           type: 'Feature' as const,
           geometry: { type: 'Point' as const, coordinates: [s.lng, s.lat] },
           properties: { type: s.type, kind: s.kind, label: s.label },
         }))
+    } else {
+      features = SENSORS.map(s => ({
+        type: 'Feature' as const,
+        geometry: { type: 'Point' as const, coordinates: [s.lng, s.lat] },
+        properties: { type: s.type, kind: s.kind, label: s.label },
+      }))
+    }
 
     source.setData({ type: 'FeatureCollection', features })
-  }, [selectedProjectId, projects])
+  }, [selectedProjectId, projects, projectDeviceMarkers])
 
   // Ajustar viewport al proyecto seleccionado
   useEffect(() => {

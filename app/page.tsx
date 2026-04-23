@@ -15,7 +15,7 @@ import { LayersPanel }    from '@/components/panels/LayersPanel'
 import { ProjectFiltersPanel, EMPTY_FILTERS, countActiveFilters } from '@/components/panels/ProjectFiltersPanel'
 import { ProjectDeviceFiltersPanel } from '@/components/panels/ProjectDeviceFiltersPanel'
 import { DevicePanel } from '@/components/panels/DevicePanel'
-import { EMPTY_DEVICE_FILTERS, generateProjectDevices } from '@/lib/projectDevices'
+import { EMPTY_DEVICE_FILTERS, generateProjectDevices, applyDeviceFilters } from '@/lib/projectDevices'
 
 export default function Home() {
   const [view, setView]           = useState<AppView>('home')
@@ -38,6 +38,18 @@ export default function Home() {
     for (const [id, name] of Object.entries(deviceNameOverrides)) out[id] = { name }
     return out
   }, [deviceNameOverrides])
+
+  const projectDeviceMarkers = useMemo(() => {
+    if (!selectedProject) return null
+    const kindMap = { iluminacion: 'luminaria', mobiliario: 'banco', jardineras: 'jardinera' } as const
+    return applyDeviceFilters(generateProjectDevices(selectedProject), deviceFilters).map(d => ({
+      lng: d.lng,
+      lat: d.lat,
+      type: (d.alert ? 'err' : 'ok') as 'ok' | 'err',
+      kind: kindMap[d.type],
+      label: d.name,
+    }))
+  }, [selectedProject, deviceFilters])
 
   const selectedDevice = useMemo(() => {
     if (!selectedProject || !selectedDeviceId) return null
@@ -186,7 +198,7 @@ export default function Home() {
               onProjectClick={handleProjectClick}
               heatmapVisible={heatmapVisible}
               cyclingLayerVisible={cyclingLayerVisible}
-              
+              projectDeviceMarkers={projectDeviceMarkers}
             />
 
             <MapControls

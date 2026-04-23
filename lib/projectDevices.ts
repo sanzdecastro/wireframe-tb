@@ -11,6 +11,19 @@ export interface ProjectDevice {
   lastSeen: string
   model: string
   address: string
+  lng: number
+  lat: number
+}
+
+function pointInPolygon(point: [number, number], polygon: number[][]): boolean {
+  const [px, py] = point
+  let inside = false
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [xi, yi] = polygon[i]
+    const [xj, yj] = polygon[j]
+    if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside
+  }
+  return inside
 }
 
 const MODELS: Record<ProjectDeviceType, string[]> = {
@@ -56,6 +69,23 @@ export function generateProjectDevices(project: Project): ProjectDevice[] {
   const rnd = seededRng(seed)
   const types: ProjectDeviceType[] = ['iluminacion', 'mobiliario', 'jardineras']
   const sensors: (ProjectDeviceSensor | null)[] = ['movimiento', 'x', 'y', null, null]
+  const poly = project.coords ?? null
+  let bbox: [number, number, number, number] | null = null
+  if (poly && poly.length >= 3) {
+    const lngs = poly.map(c => c[0]); const lats = poly.map(c => c[1])
+    bbox = [Math.min(...lngs), Math.min(...lats), Math.max(...lngs), Math.max(...lats)]
+  }
+
+  const pickPosition = (): [number, number] => {
+    if (!poly || !bbox) return [2.1686, 41.3874]
+    for (let k = 0; k < 80; k++) {
+      const lng = bbox[0] + rnd() * (bbox[2] - bbox[0])
+      const lat = bbox[1] + rnd() * (bbox[3] - bbox[1])
+      if (pointInPolygon([lng, lat], poly)) return [lng, lat]
+    }
+    return [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2]
+  }
+
   return Array.from({ length: project.devices }, (_, i) => {
     const type = types[Math.floor(rnd() * types.length)]
     const sensor = sensors[Math.floor(rnd() * sensors.length)]
@@ -70,6 +100,7 @@ export function generateProjectDevices(project: Project): ProjectDevice[] {
     const streetNum = Math.floor(rnd() * 180) + 1
     const address = `${street}, ${streetNum}`
     const num = String(i + 1).padStart(3, '0')
+    const [lng, lat] = pickPosition()
     return {
       id: `${project.id}-${i}`,
       name: `${DEVICE_TYPE_LABEL[type]} ${TYPE_PREFIX[type]}-${num}`,
@@ -81,6 +112,8 @@ export function generateProjectDevices(project: Project): ProjectDevice[] {
       lastSeen,
       model,
       address,
+      lng,
+      lat,
     }
   })
 }
