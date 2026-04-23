@@ -33,12 +33,13 @@ interface MapViewProps {
   selectedProjectId: string | null
   onZoneComplete: (coords: number[][]) => void
   onProjectClick: (project: Project) => void
+  onSensorClick?: (label: string, kind: string, sensorType: string, lng: number, lat: number) => void
   heatmapVisible?: boolean
   cyclingLayerVisible?: boolean
   projectDeviceMarkers?: ProjectDeviceMarker[] | null
 }
 
-export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedProjectId, onZoneComplete, onProjectClick, heatmapVisible = false, cyclingLayerVisible = false, projectDeviceMarkers = null }: MapViewProps) {
+export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedProjectId, onZoneComplete, onProjectClick, onSensorClick, heatmapVisible = false, cyclingLayerVisible = false, projectDeviceMarkers = null }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
   const mapboxglRef = useRef<any>(null)
@@ -49,8 +50,10 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
   const drawModeRef = useRef(drawMode)
   const mapModeRef = useRef(mapMode)
   const onProjectClickRef = useRef(onProjectClick)
+  const onSensorClickRef = useRef(onSensorClick)
   const projectsRef = useRef(projects)
   onProjectClickRef.current = onProjectClick
+  onSensorClickRef.current = onSensorClick
   projectsRef.current = projects
   drawModeRef.current = drawMode
   mapModeRef.current = mapMode
@@ -84,8 +87,9 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
     if (map.getSource(sourceId)) return
     const coords = [...p.coords, p.coords[0]]
     map.addSource(sourceId, { type: 'geojson', data: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [coords] } } })
-    map.addLayer({ id: `${sourceId}-fill`, type: 'fill', source: sourceId, layout: { visibility: 'none' }, paint: { 'fill-color': '#0070f3', 'fill-opacity': 0.18 } })
-    map.addLayer({ id: `${sourceId}-line`, type: 'line', source: sourceId, layout: { visibility: 'none' }, paint: { 'line-color': '#0070f3', 'line-width': 2 } })
+    const beforeId = map.getLayer('sensors-dots') ? 'sensors-dots' : undefined
+    map.addLayer({ id: `${sourceId}-fill`, type: 'fill', source: sourceId, layout: { visibility: 'none' }, paint: { 'fill-color': '#0070f3', 'fill-opacity': 0.18 } }, beforeId)
+    map.addLayer({ id: `${sourceId}-line`, type: 'line', source: sourceId, layout: { visibility: 'none' }, paint: { 'line-color': '#0070f3', 'line-width': 2 } }, beforeId)
     const center = p.coords.reduce((a, c) => [a[0] + c[0] / p.coords!.length, a[1] + c[1] / p.coords!.length], [0, 0])
     const el = document.createElement('div')
     el.style.cssText = 'background:white;border:1.5px solid #0070f3;border-radius:5px;padding:4px 10px;font-size:11px;font-weight:600;color:#0070f3;white-space:nowrap;cursor:pointer;box-shadow:0 1px 4px rgba(0,112,243,0.15);display:none;'
@@ -272,15 +276,13 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
 
         ensureCyclingLayer()
 
-        map.on('click', 'sensors-icons', (e: any) => {
+        const handleSensorFeatureClick = (e: any) => {
           if (!e.features?.length) return
           const { label, kind, type } = e.features[0].properties
           const [lng, lat] = e.features[0].geometry.coordinates
-          new mapboxgl.Popup({ offset: 14, closeButton: false })
-            .setLngLat([lng, lat])
-            .setHTML(`<div style="font-size:12px;font-family:-apple-system,sans-serif;color:#111;">${label}<br><span style="font-size:10px;color:#888;">${kind} · ${type === 'ok' ? 'Online' : 'Alerta'}</span></div>`)
-            .addTo(map)
-        })
+          onSensorClickRef.current?.(label, kind, type, lng, lat)
+        }
+        map.on('click', 'sensors-icons', handleSensorFeatureClick)
         map.on('mouseenter', 'sensors-icons', () => { map.getCanvas().style.cursor = 'pointer' })
         map.on('mouseleave', 'sensors-icons', () => { map.getCanvas().style.cursor = '' })
 
