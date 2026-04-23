@@ -135,6 +135,7 @@ export default function Home() {
 
   const handleSensorClick = useCallback((label: string, kind: string, sensorType: string, lng: number, lat: number) => {
     const containingProject = projects.find(p => {
+      if (!p.coords || p.coords.length < 3) return false
       const [px, py] = [lng, lat]
       let inside = false
       for (let i = 0, j = p.coords.length - 1; i < p.coords.length; j = i++) {
