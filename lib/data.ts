@@ -44,9 +44,9 @@ export const SENSORS: Sensor[] = [
   ..._mobiliariSensors,
 ]
 
-export const SENSOR_FABRICANTES: string[] = [
-  ...new Set(SENSORS.map(s => s.fabricante).filter((f): f is string => !!f)),
-].sort()
+export const SENSOR_FABRICANTES: string[] = Array.from(
+  new Set(SENSORS.map(s => s.fabricante).filter((f): f is string => !!f))
+).sort()
 
 const _mobiliariById: Record<string, { properties: Record<string, unknown>; coordinates: [number, number] }> =
   Object.fromEntries(

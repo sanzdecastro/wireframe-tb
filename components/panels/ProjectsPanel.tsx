@@ -184,7 +184,7 @@ export function ProjectsPanel({
         open={open}
         onBack={() => onSelectProject(null)}
         onClose={onClose}
-        deviceFilters={deviceFilters ?? { types: [], sensors: [], flags: [] }}
+        deviceFilters={deviceFilters ?? { types: [], sensors: [], flags: [], fabricantes: [] }}
         onOpenDeviceFilters={onOpenDeviceFilters}
         deviceOverrides={deviceOverrides}
         onSelectDevice={onSelectDevice}

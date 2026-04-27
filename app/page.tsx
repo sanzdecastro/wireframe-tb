@@ -142,7 +142,8 @@ export default function Home() {
   const handleSensorClick = useCallback((id: string) => {
     const entry = SENSORS_BY_ID[id]
     if (!entry) return
-    const { properties: props, coordinates } = entry
+    const { properties: _props, coordinates } = entry
+    const props = _props as Record<string, any>
     const SENSOR_MAP: Record<string, 'movimiento' | 'x' | 'y' | null> = { movimiento: 'movimiento', x: 'x', y: 'y' }
     const device: ProjectDevice = {
       id:       props.id,
@@ -153,8 +154,9 @@ export default function Home() {
       alert:    props.alert,
       status:   props.status === 'online' ? 'online' : 'offline',
       lastSeen: props.lastSeen,
-      model:    props.model,
-      address:  props.address,
+      model:      props.model,
+      fabricante: (props.fabricante || props.fabricant || 'Varios') as ProjectDevice['fabricante'],
+      address:    props.address,
       lng:      coordinates[0],
       lat:      coordinates[1],
     }
