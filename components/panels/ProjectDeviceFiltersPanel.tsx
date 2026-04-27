@@ -1,8 +1,8 @@
 'use client'
 
-import { Project, ProjectDeviceFilters, ProjectDeviceType, ProjectDeviceSensor, ProjectDeviceFlag } from '@/types'
+import { Project, ProjectDeviceFilters, ProjectDeviceType, ProjectDeviceSensor, ProjectDeviceFlag, ProjectDeviceFabricante } from '@/types'
 import { SidePanel, CloseIcon } from '@/components/ui'
-import { DEVICE_TYPE_LABEL, DEVICE_SENSOR_LABEL, EMPTY_DEVICE_FILTERS, countActiveDeviceFilters } from '@/lib/projectDevices'
+import { DEVICE_TYPE_LABEL, DEVICE_SENSOR_LABEL, DEVICE_FABRICANTE_LABEL, EMPTY_DEVICE_FILTERS, countActiveDeviceFilters } from '@/lib/projectDevices'
 
 interface ProjectDeviceFiltersPanelProps {
   open: boolean
@@ -85,6 +85,20 @@ export function ProjectDeviceFiltersPanel({ open, project, filters, onChange, on
                 label={DEVICE_SENSOR_LABEL[s]}
                 checked={filters.sensors.includes(s)}
                 onChange={() => onChange({ ...filters, sensors: toggle(filters.sensors, s) })}
+              />
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <div className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-1.5">Fabricante</div>
+          <div className="flex flex-col">
+            {(Object.keys(DEVICE_FABRICANTE_LABEL) as ProjectDeviceFabricante[]).map(f => (
+              <Checkbox
+                key={f}
+                label={DEVICE_FABRICANTE_LABEL[f]}
+                checked={filters.fabricantes.includes(f)}
+                onChange={() => onChange({ ...filters, fabricantes: toggle(filters.fabricantes, f) })}
               />
             ))}
           </div>

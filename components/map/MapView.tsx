@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useCallback } from 'react'
 import { MAPBOX_TOKEN, SENSORS, MAP_CENTER, MAP_ZOOM, AFLUENCIA_DATA, TEMPERATURA_DATA } from '@/lib/data'
-import { Project, MapMode } from '@/types'
+import { Project, MapMode, Sensor } from '@/types'
 
 function pointInPolygon(point: number[], polygon: number[][]): boolean {
   const [px, py] = point
@@ -38,9 +38,11 @@ interface MapViewProps {
   temperaturaVisible?: boolean
   cyclingLayerVisible?: boolean
   projectDeviceMarkers?: ProjectDeviceMarker[] | null
+  filteredSensors?: Sensor[]
 }
 
-export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedProjectId, onZoneComplete, onProjectClick, onSensorClick, heatmapVisible = false, temperaturaVisible = false, cyclingLayerVisible = false, projectDeviceMarkers = null }: MapViewProps) {
+export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedProjectId, onZoneComplete, onProjectClick, onSensorClick, heatmapVisible = false, temperaturaVisible = false, cyclingLayerVisible = false, projectDeviceMarkers = null, filteredSensors }: MapViewProps) {
+  const activeSensors = filteredSensors ?? SENSORS
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
   const mapboxglRef = useRef<any>(null)
@@ -471,23 +473,23 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
         properties: { type: m.type, kind: m.kind, label: m.label },
       }))
     } else if (p?.coords && p.coords.length >= 3) {
-      features = SENSORS
+      features = activeSensors
         .filter(s => pointInPolygon([s.lng, s.lat], p.coords!))
         .map(s => ({
           type: 'Feature' as const,
           geometry: { type: 'Point' as const, coordinates: [s.lng, s.lat] },
-          properties: { type: s.type, kind: s.kind, label: s.label },
+          properties: { id: s.id, type: s.type, kind: s.kind, label: s.label },
         }))
     } else {
-      features = SENSORS.map(s => ({
+      features = activeSensors.map(s => ({
         type: 'Feature' as const,
         geometry: { type: 'Point' as const, coordinates: [s.lng, s.lat] },
-        properties: { type: s.type, kind: s.kind, label: s.label },
+        properties: { id: s.id, type: s.type, kind: s.kind, label: s.label },
       }))
     }
 
     source.setData({ type: 'FeatureCollection', features })
-  }, [selectedProjectId, projects, projectDeviceMarkers])
+  }, [selectedProjectId, projects, projectDeviceMarkers, activeSensors])
 
   // Ajustar viewport al proyecto seleccionado
   useEffect(() => {

@@ -14,6 +14,7 @@ export interface Sensor {
   type: 'ok' | 'err'
   label: string
   kind: 'banco' | 'luminaria' | 'jardinera'
+  fabricante?: string
 }
 
 export type ProjectTaxonomy = 'proyecto' | 'area-1' | 'area-2'
@@ -68,16 +69,30 @@ export interface MapLayer {
   active: boolean
 }
 
+export interface SensorFilters {
+  kinds:       ('banco' | 'luminaria' | 'jardinera')[]
+  statuses:    ('ok' | 'err')[]
+  fabricantes: string[]
+}
+
 export type AppView = 'home' | 'map'
 export type MapMode = 'explorar' | 'proyectos'
-export type SidePanel = 'none' | 'kpi' | 'zone' | 'projects' | 'layers' | 'filters' | 'device-filters' | 'device'
+export type SidePanel = 'none' | 'kpi' | 'zone' | 'projects' | 'layers' | 'filters' | 'device-filters' | 'device' | 'sensor-filters'
 
 export type ProjectDeviceType = 'iluminacion' | 'mobiliario' | 'jardineras'
 export type ProjectDeviceSensor = 'movimiento' | 'x' | 'y'
 export type ProjectDeviceFlag = 'incident' | 'alert'
+export type ProjectDeviceFabricante =
+  // Sintéticos (datos de prueba)
+  | 'Philips' | 'Osram' | 'Signify' | 'UrbanBench' | 'EcoSeat' | 'CityRest' | 'GreenPlanter' | 'Hydro-Box' | 'BioPot'
+  // Mobiliario urbano real (Barcelona Open Data)
+  | 'Ado' | 'Benito' | 'Breinco' | 'Colomer' | 'Contenur' | 'DAE' | 'Escofet' | 'Fàbregas'
+  | 'Hercal Eco-Concrete' | 'Lamarc Inox' | 'Magourban' | 'Mein' | 'Mobles 114' | 'Moycosa'
+  | 'Novatilu' | 'Salvi' | 'Santa Cole' | 'Saura' | 'Señalización y Diseños Urbanos' | 'Urbidermis' | 'Varios'
 
 export interface ProjectDeviceFilters {
-  types:   ProjectDeviceType[]
-  sensors: ProjectDeviceSensor[]
-  flags:   ProjectDeviceFlag[]
+  types:       ProjectDeviceType[]
+  sensors:     ProjectDeviceSensor[]
+  flags:       ProjectDeviceFlag[]
+  fabricantes: ProjectDeviceFabricante[]
 }

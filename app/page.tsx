@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useCallback, useMemo } from 'react'
-import { KPI, Project, AppView, MapMode, SidePanel, ProjectFilters, ProjectDeviceFilters } from '@/types'
-import { DEFAULT_KPIS, DEFAULT_PROJECTS, SENSORS_BY_ID } from '@/lib/data'
+import { KPI, Project, AppView, MapMode, SidePanel, ProjectFilters, ProjectDeviceFilters, SensorFilters } from '@/types'
+import { DEFAULT_KPIS, DEFAULT_PROJECTS, SENSORS, SENSORS_BY_ID } from '@/lib/data'
 
 import { Navbar }         from '@/components/layout/Navbar'
 import { KpiBadge }       from '@/components/ui'
@@ -14,6 +14,7 @@ import { ProjectsPanel }  from '@/components/panels/ProjectsPanel'
 import { LayersPanel }    from '@/components/panels/LayersPanel'
 import { ProjectFiltersPanel, EMPTY_FILTERS, countActiveFilters } from '@/components/panels/ProjectFiltersPanel'
 import { ProjectDeviceFiltersPanel } from '@/components/panels/ProjectDeviceFiltersPanel'
+import { SensorFiltersPanel, EMPTY_SENSOR_FILTERS, countActiveSensorFilters, applySensorFilters } from '@/components/panels/SensorFiltersPanel'
 import { DevicePanel } from '@/components/panels/DevicePanel'
 import { EMPTY_DEVICE_FILTERS, generateProjectDevices, applyDeviceFilters, ProjectDevice } from '@/lib/projectDevices'
 
@@ -31,6 +32,7 @@ export default function Home() {
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [projectFilters, setProjectFilters] = useState<ProjectFilters>(EMPTY_FILTERS)
   const [deviceFilters, setDeviceFilters] = useState<ProjectDeviceFilters>(EMPTY_DEVICE_FILTERS)
+  const [sensorFilters, setSensorFilters] = useState<SensorFilters>(EMPTY_SENSOR_FILTERS)
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
   const [selectedDirectDevice, setSelectedDirectDevice] = useState<ProjectDevice | null>(null)
   const [deviceNameOverrides, setDeviceNameOverrides] = useState<Record<string, string>>({})
@@ -69,6 +71,8 @@ export default function Home() {
   }), [projects, projectFilters])
 
   const activeFilterCount = countActiveFilters(projectFilters)
+  const activeSensorFilterCount = countActiveSensorFilters(sensorFilters)
+  const filteredSensors = useMemo(() => applySensorFilters(SENSORS, sensorFilters), [sensorFilters])
 
   const handleExplore = () => {
     setView('map')
@@ -228,6 +232,7 @@ export default function Home() {
               temperaturaVisible={temperaturaVisible}
               cyclingLayerVisible={cyclingLayerVisible}
               projectDeviceMarkers={projectDeviceMarkers}
+              filteredSensors={filteredSensors}
             />
 
             <MapControls
@@ -236,6 +241,8 @@ export default function Home() {
               onModeChange={handleModeChange}
               onDrawToggle={handleDrawToggle}
               onLayersOpen={() => setPanel('layers')}
+              onFiltersOpen={() => setPanel('sensor-filters')}
+              activeSensorFilterCount={mapMode === 'explorar' ? activeSensorFilterCount : 0}
             />
 
             {/* Legend */}
@@ -301,6 +308,12 @@ export default function Home() {
               onRename={(id, name) => setDeviceNameOverrides(prev => ({ ...prev, [id]: name }))}
               onClose={() => { setPanel('none'); setSelectedProject(null); setSelectedDeviceId(null); setSelectedDirectDevice(null); setDeviceFilters(EMPTY_DEVICE_FILTERS) }}
               onBack={() => { setPanel(selectedDirectDevice ? 'none' : 'projects'); setSelectedDeviceId(null); setSelectedDirectDevice(null) }}
+            />
+            <SensorFiltersPanel
+              open={panel === 'sensor-filters'}
+              filters={sensorFilters}
+              onChange={setSensorFilters}
+              onClose={() => setPanel('none')}
             />
             <LayersPanel
               open={panel === 'layers'}

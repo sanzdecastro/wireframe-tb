@@ -1,5 +1,6 @@
 import { KPI, Sensor, Project, KpiCatalogCategory, MapLayer } from '@/types'
 import dispositivosGeoJson from './dispositivos_1000.json'
+import mobiliariJson from './mobiliari.json'
 
 export const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
 export const DEFAULT_KPIS: KPI[] = [
@@ -10,17 +11,72 @@ export const DEFAULT_KPIS: KPI[] = [
   
 ]
 
-export const SENSORS: Sensor[] = dispositivosGeoJson.features.map(f => ({
-  id:    f.properties.id,
-  lng:   f.geometry.coordinates[0],
-  lat:   f.geometry.coordinates[1],
-  type:  f.properties.status === 'online' ? 'ok' : 'err' as Sensor['type'],
-  kind:  (f.properties.kind ?? 'luminaria') as Sensor['kind'],
-  label: f.properties.name,
-}))
+type MobiliariItem = {
+  gis_id: number; id: number
+  tipus_de_mobiliari_urba: string; codi: string; descripcio: string; fabricant: string
+  codi_districte: number; nom_districte: string; codi_barri: number; nom_barri: string
+  zona: string; nom_carrer: string; num_carrer: number
+  latitude: number; longitude: number
+}
 
-export const SENSORS_BY_ID: Record<string, { properties: typeof dispositivosGeoJson.features[0]['properties']; coordinates: [number, number] }> =
-  Object.fromEntries(dispositivosGeoJson.features.map(f => [f.properties.id, { properties: f.properties, coordinates: f.geometry.coordinates as [number, number] }]))
+const _mobiliariSensors: Sensor[] = (mobiliariJson as MobiliariItem[])
+  .filter(d => d.latitude && d.longitude)
+  .map(d => ({
+    id:    `mob-${d.gis_id}`,
+    lng:   d.longitude,
+    lat:   d.latitude,
+    type:       'ok' as Sensor['type'],
+    kind:       'banco' as Sensor['kind'],
+    label:      d.descripcio ? `${d.tipus_de_mobiliari_urba} — ${d.descripcio}` : d.tipus_de_mobiliari_urba,
+    fabricante: d.fabricant || undefined,
+  }))
+
+export const SENSORS: Sensor[] = [
+  ...dispositivosGeoJson.features.map(f => ({
+    id:         f.properties.id,
+    lng:        f.geometry.coordinates[0],
+    lat:        f.geometry.coordinates[1],
+    type:       f.properties.status === 'online' ? 'ok' : 'err' as Sensor['type'],
+    kind:       (f.properties.kind ?? 'luminaria') as Sensor['kind'],
+    label:      f.properties.name,
+    fabricante: (f.properties.model as string | undefined)?.split(' ')[0],
+  })),
+  ..._mobiliariSensors,
+]
+
+export const SENSOR_FABRICANTES: string[] = [
+  ...new Set(SENSORS.map(s => s.fabricante).filter((f): f is string => !!f)),
+].sort()
+
+const _mobiliariById: Record<string, { properties: Record<string, unknown>; coordinates: [number, number] }> =
+  Object.fromEntries(
+    (mobiliariJson as MobiliariItem[])
+      .filter(d => d.latitude && d.longitude)
+      .map(d => [
+        `mob-${d.gis_id}`,
+        {
+          properties: {
+            id: `mob-${d.gis_id}`,
+            name: d.descripcio ? `${d.tipus_de_mobiliari_urba} — ${d.descripcio}` : d.tipus_de_mobiliari_urba,
+            kind: 'banco',
+            status: 'online',
+            fabricant: d.fabricant,
+            model: d.descripcio,
+            address: `${d.nom_carrer}, ${d.num_carrer}`,
+            nom_districte: d.nom_districte,
+            nom_barri: d.nom_barri,
+            alert: false,
+            incident: false,
+          },
+          coordinates: [d.longitude, d.latitude] as [number, number],
+        },
+      ])
+  )
+
+export const SENSORS_BY_ID: Record<string, { properties: Record<string, unknown>; coordinates: [number, number] }> = {
+  ...Object.fromEntries(dispositivosGeoJson.features.map(f => [f.properties.id, { properties: f.properties as unknown as Record<string, unknown>, coordinates: f.geometry.coordinates as [number, number] }])),
+  ..._mobiliariById,
+}
 
 export const TEMPERATURA_DATA: { lng: number; lat: number; temperatura: number }[] =
   dispositivosGeoJson.features.map(f => ({
@@ -28,6 +84,9 @@ export const TEMPERATURA_DATA: { lng: number; lat: number; temperatura: number }
     lat: f.geometry.coordinates[1],
     temperatura: f.properties.temperatura,
   }))
+
+const _avgTemp = (TEMPERATURA_DATA.reduce((s, d) => s + d.temperatura, 0) / TEMPERATURA_DATA.length).toFixed(1)
+export const TEMPERATURA_MEDIA_KPI = `${_avgTemp} °C`
 
 export const DEFAULT_PROJECTS: Project[] = [
   {
@@ -150,6 +209,7 @@ export const KPI_CATALOG: KpiCatalogCategory[] = [
       { id: 'no2',         label: 'Calidad del aire (NO₂)', desc: 'Concentración de dióxido de nitrógeno',        source: 'AQICN',          value: '38 µg/m³',  trend: 'down',    delta: '3.5%' },
       { id: 'ruido',       label: 'Nivel de ruido',         desc: 'Decibelios medios en zona urbana',              source: 'IoT Sensors',    value: '62 dB',     trend: 'up',      delta: '1.2%' },
       { id: 'temperatura', label: 'Temperatura media',      desc: 'Temperatura ambiente en la ciudad',             source: 'OpenData BCN',   value: '21.4 °C',   trend: 'neutral', delta: '0.1%' },
+      { id: 'temperatura_sensores', label: 'Temperatura media (sensores)', desc: 'Media de temperatura de los 1.000 dispositivos IoT', source: 'Sensores IoT', value: TEMPERATURA_MEDIA_KPI, trend: 'up', delta: '1.4%' },
       { id: 'co2',         label: 'Huella de CO₂',          desc: 'Emisiones equivalentes de dióxido de carbono',  source: 'Smart City API', value: '4.2 kt',    trend: 'down',    delta: '2.8%' },
     ],
   },

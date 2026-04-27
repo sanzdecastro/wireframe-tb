@@ -1,4 +1,11 @@
-import { Project, ProjectDeviceType, ProjectDeviceSensor, ProjectDeviceFilters } from '@/types'
+import { Project, ProjectDeviceType, ProjectDeviceSensor, ProjectDeviceFilters, ProjectDeviceFabricante } from '@/types'
+import mobiliariData from './mobiliari.json'
+
+type MobiliariRaw = {
+  gis_id: number; tipus_de_mobiliari_urba: string; descripcio: string
+  fabricant: string; nom_carrer: string; num_carrer: number
+  latitude: number; longitude: number
+}
 
 export interface ProjectDevice {
   id: string
@@ -10,6 +17,7 @@ export interface ProjectDevice {
   status: 'online' | 'offline'
   lastSeen: string
   model: string
+  fabricante: ProjectDeviceFabricante
   address: string
   lng: number
   lat: number
@@ -32,6 +40,53 @@ const MODELS: Record<ProjectDeviceType, string[]> = {
   jardineras:  ['GreenPlanter G-40', 'Hydro-Box Urban', 'BioPot S-12'],
 }
 
+const MODEL_FABRICANTE: Record<string, ProjectDeviceFabricante> = {
+  'Philips LUM-240':    'Philips',
+  'Osram SmartLED-X1':  'Osram',
+  'Signify CitySense 3':'Signify',
+  'UrbanBench V2':      'UrbanBench',
+  'EcoSeat Pro':        'EcoSeat',
+  'CityRest M-100':     'CityRest',
+  'GreenPlanter G-40':  'GreenPlanter',
+  'Hydro-Box Urban':    'Hydro-Box',
+  'BioPot S-12':        'BioPot',
+}
+
+export const DEVICE_FABRICANTE_LABEL: Record<ProjectDeviceFabricante, string> = {
+  // Sintéticos
+  Philips:      'Philips',
+  Osram:        'Osram',
+  Signify:      'Signify',
+  UrbanBench:   'UrbanBench',
+  EcoSeat:      'EcoSeat',
+  CityRest:     'CityRest',
+  GreenPlanter: 'GreenPlanter',
+  'Hydro-Box':  'Hydro-Box',
+  BioPot:       'BioPot',
+  // Mobiliario urbano real
+  Ado:                              'Ado',
+  Benito:                           'Benito',
+  Breinco:                          'Breinco',
+  Colomer:                          'Colomer',
+  Contenur:                         'Contenur',
+  DAE:                              'DAE',
+  Escofet:                          'Escofet',
+  'Fàbregas':                       'Fàbregas',
+  'Hercal Eco-Concrete':            'Hercal Eco-Concrete',
+  'Lamarc Inox':                    'Lamarc Inox',
+  Magourban:                        'Magourban',
+  Mein:                             'Mein',
+  'Mobles 114':                     'Mobles 114',
+  Moycosa:                          'Moycosa',
+  Novatilu:                         'Novatilu',
+  Salvi:                            'Salvi',
+  'Santa Cole':                     'Santa Cole',
+  Saura:                            'Saura',
+  'Señalización y Diseños Urbanos': 'Señalización y Diseños Urbanos',
+  Urbidermis:                       'Urbidermis',
+  Varios:                           'Varios',
+}
+
 const STREETS = ['Carrer de Gràcia', 'Passeig de Sant Joan', 'Av. Diagonal', 'Ronda Sant Pere', 'Carrer Gran', 'Pl. de la Virreina', 'Carrer Verdi', 'Travessera de Dalt']
 const LAST_SEEN_ONLINE  = ['Hace 1 min', 'Hace 4 min', 'Hace 12 min', 'Hace 38 min', 'Hace 2 h']
 const LAST_SEEN_OFFLINE = ['Hace 3 h', 'Hace 8 h', 'Ayer', 'Hace 2 días', 'Hace 1 semana']
@@ -50,10 +105,10 @@ export const DEVICE_SENSOR_LABEL: Record<ProjectDeviceSensor, string> = {
 
 const TYPE_PREFIX: Record<ProjectDeviceType, string> = { iluminacion: 'L', mobiliario: 'M', jardineras: 'J' }
 
-export const EMPTY_DEVICE_FILTERS: ProjectDeviceFilters = { types: [], sensors: [], flags: [] }
+export const EMPTY_DEVICE_FILTERS: ProjectDeviceFilters = { types: [], sensors: [], flags: [], fabricantes: [] }
 
 export function countActiveDeviceFilters(f: ProjectDeviceFilters) {
-  return f.types.length + f.sensors.length + f.flags.length
+  return f.types.length + f.sensors.length + f.flags.length + f.fabricantes.length
 }
 
 function seededRng(seed: number) {
@@ -62,6 +117,31 @@ function seededRng(seed: number) {
     s = (s * 9301 + 49297) % 233280
     return s / 233280
   }
+}
+
+function realMobiliariInPolygon(poly: number[][], rng: () => number): ProjectDevice[] {
+  return (mobiliariData as MobiliariRaw[])
+    .filter(d => d.latitude && d.longitude && pointInPolygon([d.longitude, d.latitude], poly))
+    .map(d => {
+      const status: 'online' | 'offline' = rng() < 0.85 ? 'online' : 'offline'
+      const lastSeen = (status === 'online' ? LAST_SEEN_ONLINE : LAST_SEEN_OFFLINE)[Math.floor(rng() * 5) % (status === 'online' ? LAST_SEEN_ONLINE.length : LAST_SEEN_OFFLINE.length)]
+      const fabricante = (d.fabricant || 'Varios') as ProjectDeviceFabricante
+      return {
+        id:        `mob-${d.gis_id}`,
+        name:      d.descripcio ? `${d.tipus_de_mobiliari_urba} — ${d.descripcio}` : d.tipus_de_mobiliari_urba,
+        type:      'mobiliario' as ProjectDeviceType,
+        sensor:    null,
+        incident:  rng() < 0.1,
+        alert:     rng() < 0.05,
+        status,
+        lastSeen,
+        model:     d.descripcio || d.tipus_de_mobiliari_urba,
+        fabricante,
+        address:   `${d.nom_carrer}, ${d.num_carrer}`,
+        lng:       d.longitude,
+        lat:       d.latitude,
+      }
+    })
 }
 
 export function generateProjectDevices(project: Project): ProjectDevice[] {
@@ -86,7 +166,7 @@ export function generateProjectDevices(project: Project): ProjectDevice[] {
     return [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2]
   }
 
-  return Array.from({ length: project.devices }, (_, i) => {
+  const synthetic = Array.from({ length: project.devices }, (_, i) => {
     const type = types[Math.floor(rnd() * types.length)]
     const sensor = sensors[Math.floor(rnd() * sensors.length)]
     const incident = rnd() < 0.22
@@ -96,6 +176,7 @@ export function generateProjectDevices(project: Project): ProjectDevice[] {
     const lastSeen = lastSeenPool[Math.floor(rnd() * lastSeenPool.length)]
     const modelPool = MODELS[type]
     const model = modelPool[Math.floor(rnd() * modelPool.length)]
+    const fabricante = MODEL_FABRICANTE[model]
     const street = STREETS[Math.floor(rnd() * STREETS.length)]
     const streetNum = Math.floor(rnd() * 180) + 1
     const address = `${street}, ${streetNum}`
@@ -104,24 +185,19 @@ export function generateProjectDevices(project: Project): ProjectDevice[] {
     return {
       id: `${project.id}-${i}`,
       name: `${DEVICE_TYPE_LABEL[type]} ${TYPE_PREFIX[type]}-${num}`,
-      type,
-      sensor,
-      incident,
-      alert,
-      status,
-      lastSeen,
-      model,
-      address,
-      lng,
-      lat,
+      type, sensor, incident, alert, status, lastSeen, model, fabricante, address, lng, lat,
     }
   })
+
+  const real = poly ? realMobiliariInPolygon(poly, rnd) : []
+  return [...synthetic, ...real]
 }
 
 export function applyDeviceFilters(devices: ProjectDevice[], f: ProjectDeviceFilters): ProjectDevice[] {
   return devices.filter(d => {
-    if (f.types.length   && !f.types.includes(d.type)) return false
-    if (f.sensors.length && (!d.sensor || !f.sensors.includes(d.sensor))) return false
+    if (f.types.length        && !f.types.includes(d.type))              return false
+    if (f.sensors.length      && (!d.sensor || !f.sensors.includes(d.sensor))) return false
+    if (f.fabricantes.length  && !f.fabricantes.includes(d.fabricante))  return false
     if (f.flags.includes('incident') && !d.incident) return false
     if (f.flags.includes('alert')    && !d.alert)    return false
     return true

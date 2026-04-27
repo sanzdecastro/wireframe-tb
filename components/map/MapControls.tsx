@@ -8,9 +8,11 @@ interface MapControlsProps {
   onModeChange: (mode: MapMode) => void
   onDrawToggle: () => void
   onLayersOpen: () => void
+  onFiltersOpen: () => void
+  activeSensorFilterCount?: number
 }
 
-export function MapControls({ mode, drawMode, onModeChange, onDrawToggle, onLayersOpen }: MapControlsProps) {
+export function MapControls({ mode, drawMode, onModeChange, onDrawToggle, onLayersOpen, onFiltersOpen, activeSensorFilterCount = 0 }: MapControlsProps) {
   return (
     <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center gap-2 pointer-events-auto">
       {/* Mode toggle */}
@@ -53,13 +55,28 @@ export function MapControls({ mode, drawMode, onModeChange, onDrawToggle, onLaye
             title="Capas"
             className="w-fit h-7 px-3 gap-2 text-xs border-none rounded flex items-center justify-center cursor-pointer transition-colors bg-transparent text-neutral-500 hover:bg-black/[0.05]"
           >
-            
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-500">
               <path d="M1 11.5l7 3 7-3"/>
               <path d="M1 8l7 3 7-3"/>
               <path d="M1 4.5l7-3 7 3-7 3-7-3z"/>
             </svg>
             Mostrar capas
+          </button>
+          <div className="w-px h-4 bg-black/12 mx-0.5" />
+          <button
+            onClick={onFiltersOpen}
+            title="Filtros"
+            className="relative w-fit h-7 px-3 gap-2 text-xs border-none rounded flex items-center justify-center cursor-pointer transition-colors bg-transparent text-neutral-500 hover:bg-black/[0.05]"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2 4h12M4 8h8M6 12h4"/>
+            </svg>
+            Filtros
+            {activeSensorFilterCount > 0 && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-neutral-900 text-white text-[9px] font-bold flex items-center justify-center">
+                {activeSensorFilterCount}
+              </span>
+            )}
           </button>
         </div>
       )}
