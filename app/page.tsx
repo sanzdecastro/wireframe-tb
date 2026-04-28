@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useCallback, useMemo } from 'react'
-import { KPI, Project, AppView, MapMode, SidePanel, ProjectFilters, ProjectDeviceFilters, SensorFilters } from '@/types'
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
+import { KPI, Project, AppView, MapMode, SidePanel, ProjectFilters, ProjectDeviceFilters, SensorFilters, Sensor, GpkgFeatureLayer } from '@/types'
 import { DEFAULT_KPIS, DEFAULT_PROJECTS, SENSORS, SENSORS_BY_ID } from '@/lib/data'
 
 import { Navbar }         from '@/components/layout/Navbar'
@@ -17,6 +17,7 @@ import { ProjectDeviceFiltersPanel } from '@/components/panels/ProjectDeviceFilt
 import { SensorFiltersPanel, EMPTY_SENSOR_FILTERS, countActiveSensorFilters, applySensorFilters } from '@/components/panels/SensorFiltersPanel'
 import { DevicePanel } from '@/components/panels/DevicePanel'
 import { EMPTY_DEVICE_FILTERS, generateProjectDevices, applyDeviceFilters, ProjectDevice } from '@/lib/projectDevices'
+import { ImportResult } from '@/lib/csvImport'
 
 export default function Home() {
   const [view, setView]           = useState<AppView>('home')
@@ -26,6 +27,7 @@ export default function Home() {
   const [projects, setProjects]   = useState<Project[]>(DEFAULT_PROJECTS)
   const [drawMode, setDrawMode]             = useState(false)
   const [pendingCoords, setPendingCoords]   = useState<number[][]>([])
+  const [sensorsVisible, setSensorsVisible] = useState(true)
   const [heatmapVisible, setHeatmapVisible] = useState(false)
   const [temperaturaVisible, setTemperaturaVisible] = useState(false)
   const [cyclingLayerVisible, setCyclingLayerVisible] = useState(false)
@@ -36,6 +38,19 @@ export default function Home() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
   const [selectedDirectDevice, setSelectedDirectDevice] = useState<ProjectDevice | null>(null)
   const [deviceNameOverrides, setDeviceNameOverrides] = useState<Record<string, string>>({})
+  // Sensores por capa: key = layerId, value = array de sensores
+  const [importedLayerSensors, setImportedLayerSensors] = useState<Record<string, Sensor[]>>({})
+  // Capas con toggle desactivado
+  const [inactiveLayerIds, setInactiveLayerIds] = useState<Set<string>>(new Set())
+  // Iconos de tipos personalizados: kind → shapeId
+  const [customKindIcons, setCustomKindIcons] = useState<Record<string, string>>({})
+  // Capas GPKG importadas
+  const [gpkgLayers, setGpkgLayers] = useState<GpkgFeatureLayer[]>([])
+  // Opacidades por capa: layerId → 0-100
+  const [layerOpacities, setLayerOpacities] = useState<Record<string, number>>({})
+
+  // Ref estable para que handleSensorClick acceda a allSensors sin re-crearse
+  const allSensorsRef = useRef<Sensor[]>(SENSORS)
 
   const deviceOverrides = useMemo(() => {
     const out: Record<string, { name: string }> = {}
@@ -70,9 +85,98 @@ export default function Home() {
     return true
   }), [projects, projectFilters])
 
+  // Todos los sensores importados (activos + inactivos) — para dedup y customKinds en LayersPanel
+  const allImportedSensors = useMemo(
+    () => Object.values(importedLayerSensors).flat(),
+    [importedLayerSensors],
+  )
+
+  // Solo sensores de capas activas — para el mapa y los filtros
+  const activeImportedSensors = useMemo(
+    () => Object.entries(importedLayerSensors)
+      .filter(([id]) => !inactiveLayerIds.has(id))
+      .flatMap(([, sensors]) => sensors),
+    [importedLayerSensors, inactiveLayerIds],
+  )
+
+  // Sensores base + importados activos (sin duplicados por id)
+  const allSensors = useMemo(() => {
+    if (activeImportedSensors.length === 0) return SENSORS
+    const baseIds = new Set(SENSORS.map(s => s.id))
+    const novel   = activeImportedSensors.filter(s => !baseIds.has(s.id))
+    return [...SENSORS, ...novel]
+  }, [activeImportedSensors])
+
+  // Mantener ref sincronizado para que handleSensorClick lo use sin deps
+  useEffect(() => { allSensorsRef.current = allSensors }, [allSensors])
+
+  // Opciones de filtro derivadas de los sensores reales disponibles
+  const filterOptions = useMemo(() => {
+    const kindCount:  Partial<Record<Sensor['kind'], number>> = {}
+    const fabCount:   Record<string, number>                  = {}
+
+    for (const s of allSensors) {
+      kindCount[s.kind] = (kindCount[s.kind] ?? 0) + 1
+      if (s.fabricante) fabCount[s.fabricante] = (fabCount[s.fabricante] ?? 0) + 1
+    }
+
+    // Los tipos base tienen orden fijo; los personalizados se añaden al final ordenados
+    const BASE_ORDER = ['banco', 'luminaria', 'jardinera']
+    const allKinds   = Object.keys(kindCount) as Sensor['kind'][]
+    const sorted     = [
+      ...BASE_ORDER.filter(k => kindCount[k]),
+      ...allKinds.filter(k => !BASE_ORDER.includes(k)).sort(),
+    ]
+    const kinds = sorted.map(k => ({ value: k, count: kindCount[k]! }))
+
+    const fabricantes = Object.entries(fabCount)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([value, count]) => ({ value, count }))
+
+    return { kinds, fabricantes }
+  }, [allSensors])
+
+  const handleSensorsImport = useCallback((
+    layerId: string,
+    sensors: Sensor[],
+    _result: ImportResult,
+    kindIcon?: { kind: string; shapeId: string },
+  ) => {
+    // Taggear cada sensor con el ID de su capa para el control de opacidad en el mapa
+    const tagged = sensors.map(s => ({ ...s, layerId }))
+    setImportedLayerSensors(prev => ({ ...prev, [layerId]: tagged }))
+    if (kindIcon) {
+      setCustomKindIcons(prev => ({ ...prev, [kindIcon.kind]: kindIcon.shapeId }))
+    }
+  }, [])
+
+  const handleCustomLayerToggle = useCallback((id: string, active: boolean) => {
+    setInactiveLayerIds(prev => {
+      const next = new Set(prev)
+      active ? next.delete(id) : next.add(id)
+      return next
+    })
+  }, [])
+
+  const handleLayerOpacityChange = useCallback((id: string, opacity: number) => {
+    setLayerOpacities(prev => ({ ...prev, [id]: opacity }))
+  }, [])
+
+  const handleGpkgImport = useCallback((layers: GpkgFeatureLayer[]) => {
+    setGpkgLayers(prev => [...prev, ...layers])
+  }, [])
+
+  const handleGpkgLayerToggle = useCallback((id: string) => {
+    setGpkgLayers(prev => prev.map(l => l.id === id ? { ...l, active: !l.active } : l))
+  }, [])
+
+  const handleGpkgLayerOpacity = useCallback((id: string, opacity: number) => {
+    setGpkgLayers(prev => prev.map(l => l.id === id ? { ...l, opacity } : l))
+  }, [])
+
   const activeFilterCount = countActiveFilters(projectFilters)
   const activeSensorFilterCount = countActiveSensorFilters(sensorFilters)
-  const filteredSensors = useMemo(() => applySensorFilters(SENSORS, sensorFilters), [sensorFilters])
+  const filteredSensors = useMemo(() => applySensorFilters(allSensors, sensorFilters), [allSensors, sensorFilters])
 
   const handleExplore = () => {
     setView('map')
@@ -140,26 +244,56 @@ export default function Home() {
   }
 
   const handleSensorClick = useCallback((id: string) => {
-    const entry = SENSORS_BY_ID[id]
-    if (!entry) return
-    const { properties: _props, coordinates } = entry
-    const props = _props as Record<string, any>
     const SENSOR_MAP: Record<string, 'movimiento' | 'x' | 'y' | null> = { movimiento: 'movimiento', x: 'x', y: 'y' }
-    const device: ProjectDevice = {
-      id:       props.id,
-      name:     props.name,
-      type:     props.type as ProjectDevice['type'],
-      sensor:   SENSOR_MAP[props.sensor] ?? null,
-      incident: props.incident,
-      alert:    props.alert,
-      status:   props.status === 'online' ? 'online' : 'offline',
-      lastSeen: props.lastSeen,
-      model:      props.model,
-      fabricante: (props.fabricante || props.fabricant || 'Varios') as ProjectDevice['fabricante'],
-      address:    props.address,
-      lng:      coordinates[0],
-      lat:      coordinates[1],
+    const KIND_TO_TYPE: Record<string, ProjectDevice['type']> = {
+      luminaria: 'iluminacion', jardinera: 'jardineras', banco: 'mobiliario',
     }
+
+    let device: ProjectDevice | null = null
+
+    // ── Sensor en SENSORS_BY_ID (GeoJSON original) ────────────────────────
+    const entry = SENSORS_BY_ID[id]
+    if (entry) {
+      const { properties: _props, coordinates } = entry
+      const props = _props as Record<string, any>
+      device = {
+        id:         props.id,
+        name:       props.name,
+        type:       props.type as ProjectDevice['type'],
+        sensor:     SENSOR_MAP[props.sensor] ?? null,
+        incident:   props.incident ?? false,
+        alert:      props.alert ?? false,
+        status:     props.status === 'online' ? 'online' : 'offline',
+        lastSeen:   props.lastSeen ?? '',
+        model:      props.model ?? '',
+        fabricante: (props.fabricante || props.fabricant || 'Varios') as ProjectDevice['fabricante'],
+        address:    props.address ?? '',
+        lng:        coordinates[0],
+        lat:        coordinates[1],
+      }
+    }
+
+    // ── Fallback: sensor importado vía CSV ────────────────────────────────
+    if (!device) {
+      const sensor = allSensorsRef.current.find(s => s.id === id)
+      if (!sensor) return
+      device = {
+        id:         sensor.id,
+        name:       sensor.label,
+        type:       KIND_TO_TYPE[sensor.kind] ?? 'mobiliario',
+        sensor:     null,
+        incident:   false,
+        alert:      sensor.type === 'err',
+        status:     sensor.type === 'ok' ? 'online' : 'offline',
+        lastSeen:   '',
+        model:      '',
+        fabricante: (sensor.fabricante ?? 'Varios') as ProjectDevice['fabricante'],
+        address:    '',
+        lng:        sensor.lng,
+        lat:        sensor.lat,
+      }
+    }
+
     setSelectedDirectDevice(device)
     setSelectedProject(null)
     setSelectedDeviceId(null)
@@ -230,11 +364,15 @@ export default function Home() {
               onZoneComplete={handleZoneComplete}
               onProjectClick={handleProjectClick}
               onSensorClick={handleSensorClick}
+              sensorsVisible={sensorsVisible}
               heatmapVisible={heatmapVisible}
               temperaturaVisible={temperaturaVisible}
               cyclingLayerVisible={cyclingLayerVisible}
               projectDeviceMarkers={projectDeviceMarkers}
               filteredSensors={filteredSensors}
+              customKindIcons={customKindIcons}
+              layerOpacities={layerOpacities}
+              gpkgLayers={gpkgLayers}
             />
 
             <MapControls
@@ -314,18 +452,30 @@ export default function Home() {
             <SensorFiltersPanel
               open={panel === 'sensor-filters'}
               filters={sensorFilters}
+              kinds={filterOptions.kinds}
+              fabricantes={filterOptions.fabricantes}
               onChange={setSensorFilters}
               onClose={() => setPanel('none')}
             />
             <LayersPanel
               open={panel === 'layers'}
+              sensorsVisible={sensorsVisible}
               heatmapVisible={heatmapVisible}
               temperaturaVisible={temperaturaVisible}
               cyclingLayerVisible={cyclingLayerVisible}
               onClose={() => setPanel('none')}
+              onSensorsToggle={() => setSensorsVisible(v => !v)}
               onHeatmapToggle={() => setHeatmapVisible(v => !v)}
               onTemperaturaToggle={() => setTemperaturaVisible(v => !v)}
               onCyclingLayerToggle={onCyclingLayerToggle}
+              importedSensors={allImportedSensors}
+              onSensorsImport={handleSensorsImport}
+              onCustomLayerToggle={handleCustomLayerToggle}
+              onLayerOpacityChange={handleLayerOpacityChange}
+              gpkgLayers={gpkgLayers}
+              onGpkgImport={handleGpkgImport}
+              onGpkgLayerToggle={handleGpkgLayerToggle}
+              onGpkgLayerOpacity={handleGpkgLayerOpacity}
             />
         </div>
       )}

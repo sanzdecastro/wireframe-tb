@@ -7,14 +7,19 @@ export interface KPI {
   on: boolean
 }
 
+// Tipos predefinidos de sensor. El campo admite strings adicionales
+// para tipos importados dinámicamente (ej. 'semaforo', 'sensor_iot').
+export type SensorKind = 'banco' | 'luminaria' | 'jardinera' | string
+
 export interface Sensor {
   id: string
   lng: number
   lat: number
   type: 'ok' | 'err'
   label: string
-  kind: 'banco' | 'luminaria' | 'jardinera'
+  kind: SensorKind
   fabricante?: string
+  layerId?: string   // ID de la capa CSV origen (undefined para sensores base)
 }
 
 export type ProjectTaxonomy = 'proyecto' | 'area-1' | 'area-2'
@@ -60,6 +65,24 @@ export interface KpiCatalogCategory {
   sources: KpiCatalogSource[]
 }
 
+export interface GpkgColorScheme {
+  property:   string
+  categories: Record<string, string>  // valor (como string) → color hex
+  isNumeric:  boolean                 // true cuando los valores originales son números
+}
+
+export interface GpkgFeatureLayer {
+  id:           string
+  label:        string
+  tableName:    string
+  geojson:      object   // GeoJSON FeatureCollection
+  geometryType: 'point' | 'linestring' | 'polygon' | 'mixed'
+  color:        string   // color fallback (cuando no hay colorScheme)
+  active:       boolean
+  opacity:      number   // 0-100
+  colorScheme?: GpkgColorScheme  // esquema categórico auto-detectado
+}
+
 export interface MapLayer {
   id: string
   label: string
@@ -70,7 +93,7 @@ export interface MapLayer {
 }
 
 export interface SensorFilters {
-  kinds:       ('banco' | 'luminaria' | 'jardinera')[]
+  kinds:       string[]   // acepta kinds dinámicos además de los predefinidos
   statuses:    ('ok' | 'err')[]
   fabricantes: string[]
 }

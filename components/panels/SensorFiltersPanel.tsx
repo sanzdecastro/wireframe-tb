@@ -2,7 +2,6 @@
 
 import { Sensor, SensorFilters } from '@/types'
 import { SidePanel, CloseIcon } from '@/components/ui'
-import { SENSOR_FABRICANTES } from '@/lib/data'
 
 export const EMPTY_SENSOR_FILTERS: SensorFilters = { kinds: [], statuses: [], fabricantes: [] }
 
@@ -24,7 +23,16 @@ function toggle<T>(arr: T[], v: T): T[] {
   return arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v]
 }
 
-function Checkbox({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) {
+// ── Subcomponentes ─────────────────────────────────────────────────────────────
+
+function Checkbox({
+  checked, onChange, label, count,
+}: {
+  checked: boolean
+  onChange: () => void
+  label: string
+  count?: number
+}) {
   return (
     <label className="flex items-center gap-2 py-1 cursor-pointer select-none">
       <span
@@ -40,20 +48,34 @@ function Checkbox({ checked, onChange, label }: { checked: boolean; onChange: ()
         )}
       </span>
       <input type="checkbox" checked={checked} onChange={onChange} className="sr-only" />
-      <span className="text-xs text-neutral-700">{label}</span>
+      <span className="text-xs text-neutral-700 flex-1">{label}</span>
+      {count !== undefined && (
+        <span className="text-[10px] text-neutral-400 tabular-nums">{count.toLocaleString()}</span>
+      )}
     </label>
   )
 }
 
-interface SensorFiltersPanelProps {
-  open: boolean
-  filters: SensorFilters
-  onChange: (f: SensorFilters) => void
-  onClose: () => void
+// ── Tipos ──────────────────────────────────────────────────────────────────────
+
+export interface FilterOption<T extends string> {
+  value: T
+  count: number
 }
 
+interface SensorFiltersPanelProps {
+  open:         boolean
+  filters:      SensorFilters
+  kinds?:       FilterOption<Sensor['kind']>[]
+  fabricantes?: FilterOption<string>[]
+  onChange:     (f: SensorFilters) => void
+  onClose:      () => void
+}
+
+// ── Labels estáticos ───────────────────────────────────────────────────────────
+
 const KIND_LABELS: Record<Sensor['kind'], string> = {
-  banco:     'Banco / Mobiliario',
+  banco:     'Banco',
   luminaria: 'Luminaria',
   jardinera: 'Jardinera',
 }
@@ -63,8 +85,21 @@ const STATUS_LABELS: Record<Sensor['type'], string> = {
   err: 'Alerta',
 }
 
-export function SensorFiltersPanel({ open, filters, onChange, onClose }: SensorFiltersPanelProps) {
-  const active = countActiveSensorFilters(filters)
+// Fallback estático si no se pasan props dinámicas
+const DEFAULT_KINDS: FilterOption<Sensor['kind']>[] = [
+  { value: 'banco',     count: 0 },
+  { value: 'luminaria', count: 0 },
+  { value: 'jardinera', count: 0 },
+]
+
+// ── Componente ─────────────────────────────────────────────────────────────────
+
+export function SensorFiltersPanel({
+  open, filters, kinds, fabricantes, onChange, onClose,
+}: SensorFiltersPanelProps) {
+  const active   = countActiveSensorFilters(filters)
+  const kindList = kinds       ?? DEFAULT_KINDS
+  const fabList  = fabricantes ?? []
 
   return (
     <SidePanel open={open}>
@@ -76,24 +111,32 @@ export function SensorFiltersPanel({ open, filters, onChange, onClose }: SensorF
           </button>
         </div>
         <h2 className="text-xl font-medium text-black/90 leading-tight">Filtros</h2>
-        <p className="text-[11px] text-neutral-400 mt-0.5">Filtra los sensores visibles en el mapa</p>
+        <p className="text-[11px] text-neutral-400 mt-0.5">
+          {kindList.reduce((s, k) => s + k.count, 0).toLocaleString()} sensores disponibles
+        </p>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+
+        {/* Tipo de dispositivo — dinámico */}
         <div>
-          <div className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-1.5">Tipo de dispositivo</div>
+          <div className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-1.5">
+            Tipo de dispositivo
+          </div>
           <div className="flex flex-col">
-            {(Object.keys(KIND_LABELS) as Sensor['kind'][]).map(k => (
+            {kindList.map(({ value, count }) => (
               <Checkbox
-                key={k}
-                label={KIND_LABELS[k]}
-                checked={filters.kinds.includes(k)}
-                onChange={() => onChange({ ...filters, kinds: toggle(filters.kinds, k) })}
+                key={value}
+                label={KIND_LABELS[value] ?? value}
+                count={count}
+                checked={filters.kinds.includes(value)}
+                onChange={() => onChange({ ...filters, kinds: toggle(filters.kinds, value) })}
               />
             ))}
           </div>
         </div>
 
+        {/* Estado */}
         <div>
           <div className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-1.5">Estado</div>
           <div className="flex flex-col">
@@ -108,19 +151,30 @@ export function SensorFiltersPanel({ open, filters, onChange, onClose }: SensorF
           </div>
         </div>
 
-        <div>
-          <div className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-1.5">Fabricante</div>
-          <div className="flex flex-col">
-            {SENSOR_FABRICANTES.map(fab => (
-              <Checkbox
-                key={fab}
-                label={fab}
-                checked={filters.fabricantes.includes(fab)}
-                onChange={() => onChange({ ...filters, fabricantes: toggle(filters.fabricantes, fab) })}
-              />
-            ))}
+        {/* Fabricante — dinámico */}
+        {fabList.length > 0 && (
+          <div>
+            <div className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-1.5">
+              Fabricante
+              {fabricantes && (
+                <span className="ml-1.5 text-[10px] font-normal normal-case">
+                  ({fabList.length})
+                </span>
+              )}
+            </div>
+            <div className="flex flex-col">
+              {fabList.map(({ value, count }) => (
+                <Checkbox
+                  key={value}
+                  label={value}
+                  count={count}
+                  checked={filters.fabricantes.includes(value)}
+                  onChange={() => onChange({ ...filters, fabricantes: toggle(filters.fabricantes, value) })}
+                />
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       <div className="px-4 py-3 border-t border-black/[0.08] flex items-center justify-between gap-2 flex-shrink-0">

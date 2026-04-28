@@ -1,8 +1,27 @@
 'use client'
 
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef, useCallback, useMemo } from 'react'
 import { MAPBOX_TOKEN, SENSORS, MAP_CENTER, MAP_ZOOM, AFLUENCIA_DATA, TEMPERATURA_DATA } from '@/lib/data'
 import { Project, MapMode, Sensor } from '@/types'
+import { ICON_SHAPE_MAP } from '@/lib/sensorIconShapes'
+import type { GpkgFeatureLayer } from '@/types'
+
+// ── Helpers de iconos (sin dependencia del mapa, reutilizables) ───────────────
+
+function buildSvgIcon(shape: string, borderColor: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">
+    <rect width="28" height="28" rx="5" fill="white" stroke="${borderColor}" stroke-width="1.5"/>
+    ${shape}
+  </svg>`
+}
+
+function loadMapImage(map: any, id: string, svg: string): Promise<void> {
+  return new Promise(resolve => {
+    const img = new Image(28, 28)
+    img.onload = () => { map.addImage(id, img); resolve() }
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)
+  })
+}
 
 function pointInPolygon(point: number[], polygon: number[][]): boolean {
   const [px, py] = point
@@ -34,14 +53,18 @@ interface MapViewProps {
   onZoneComplete: (coords: number[][]) => void
   onProjectClick: (project: Project) => void
   onSensorClick?: (id: string) => void
+  sensorsVisible?: boolean
   heatmapVisible?: boolean
   temperaturaVisible?: boolean
   cyclingLayerVisible?: boolean
   projectDeviceMarkers?: ProjectDeviceMarker[] | null
   filteredSensors?: Sensor[]
+  customKindIcons?: Record<string, string>   // kind → shapeId
+  layerOpacities?:  Record<string, number>   // panelLayerId → 0-100
+  gpkgLayers?:      GpkgFeatureLayer[]
 }
 
-export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedProjectId, onZoneComplete, onProjectClick, onSensorClick, heatmapVisible = false, temperaturaVisible = false, cyclingLayerVisible = false, projectDeviceMarkers = null, filteredSensors }: MapViewProps) {
+export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedProjectId, onZoneComplete, onProjectClick, onSensorClick, sensorsVisible = true, heatmapVisible = false, temperaturaVisible = false, cyclingLayerVisible = false, projectDeviceMarkers = null, filteredSensors, customKindIcons, layerOpacities, gpkgLayers }: MapViewProps) {
   const activeSensors = filteredSensors ?? SENSORS
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
@@ -61,26 +84,31 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
   drawModeRef.current = drawMode
   mapModeRef.current = mapMode
 
-  const updateDrawLine = useCallback((map: any, coords: number[][], closed = false) => {
+  const updateDrawLine = useCallback((map: any, coords: number[][]) => {
+    const hasArea = coords.length >= 3
     const geojson: any = {
       type: 'Feature',
-      geometry: closed
-        ? { type: 'Polygon', coordinates: [coords] }
+      geometry: hasArea
+        ? { type: 'Polygon', coordinates: [[...coords, coords[0]]] }
         : { type: 'LineString', coordinates: coords },
     }
     if (!map.getSource('draw-source')) {
       map.addSource('draw-source', { type: 'geojson', data: geojson })
-      if (!closed) {
-        map.addLayer({ id: 'draw-line', type: 'line', source: 'draw-source', paint: { 'line-color': '#0070f3', 'line-width': 2, 'line-dasharray': [4, 3] } })
-      }
+      map.addLayer({
+        id: 'draw-fill',
+        type: 'fill',
+        source: 'draw-source',
+        filter: ['==', '$type', 'Polygon'],
+        paint: { 'fill-color': '#0070f3', 'fill-opacity': 0.12 },
+      })
+      map.addLayer({
+        id: 'draw-line',
+        type: 'line',
+        source: 'draw-source',
+        paint: { 'line-color': '#0070f3', 'line-width': 2, 'line-opacity': 0.9 },
+      })
     } else {
       map.getSource('draw-source').setData(geojson)
-      if (closed) {
-        if (map.getLayer('draw-line')) map.removeLayer('draw-line')
-        if (!map.getLayer('draw-fill')) {
-          map.addLayer({ id: 'draw-fill', type: 'fill', source: 'draw-source', paint: { 'fill-color': '#0070f3', 'fill-opacity': 0.1 } })
-        }
-      }
     }
   }, [])
 
@@ -178,18 +206,25 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
   // Init map
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
+    let destroyed = false
+    let handleWindowResize: (() => void) | null = null
     import('mapbox-gl').then(({ default: mapboxgl }) => {
+      if (destroyed || mapRef.current) return
       mapboxglRef.current = mapboxgl
 
       mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!
-      
+
       const map = new mapboxgl.Map({
         container: containerRef.current!,
         style: 'mapbox://styles/mapbox/light-v11',
         center: MAP_CENTER,
         zoom: MAP_ZOOM,
         attributionControl: false,
+        trackResize: false,
       })
+
+      handleWindowResize = () => map.resize()
+      window.addEventListener('resize', handleWindowResize)
       map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'bottom-right')
       map.addControl(new mapboxgl.AttributionControl({ compact: true }))
 
@@ -205,12 +240,6 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
         }
         map.addImage('sq-ok',  makeSquare('#00a63e'), { pixelRatio: 2 })
         map.addImage('sq-err', makeSquare('#dd0000'), { pixelRatio: 2 })
-
-        const svgIcon = (shape: string, border: string) =>
-          `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">
-            <rect width="28" height="28" rx="5" fill="white" stroke="${border}" stroke-width="1.5"/>
-            ${shape}
-          </svg>`
 
         const shapes = {
           banco:     `<rect x="5" y="16" width="18" height="2.5" rx="1" fill="#333"/>
@@ -228,16 +257,10 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
                       <circle cx="19" cy="17" r="3.5" fill="#4CAF50"/>`,
         }
 
-        const loadSvg = (id: string, svg: string) => new Promise<void>(resolve => {
-          const img = new Image(28, 28)
-          img.onload = () => { map.addImage(id, img); resolve() }
-          img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)
-        })
-
         await Promise.all(
           (['banco', 'luminaria', 'jardinera'] as const).flatMap(kind => [
-            loadSvg(`${kind}-ok`,  svgIcon(shapes[kind], '#00a63e')),
-            loadSvg(`${kind}-err`, svgIcon(shapes[kind], '#dd0000')),
+            loadMapImage(map, `${kind}-ok`,  buildSvgIcon(shapes[kind], '#00a63e')),
+            loadMapImage(map, `${kind}-err`, buildSvgIcon(shapes[kind], '#dd0000')),
           ])
         )
 
@@ -248,7 +271,7 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
             features: SENSORS.map(s => ({
               type: 'Feature',
               geometry: { type: 'Point', coordinates: [s.lng, s.lat] },
-              properties: { id: s.id, type: s.type, kind: s.kind, label: s.label },
+              properties: { id: s.id, type: s.type, kind: s.kind, label: s.label, layerId: '' },
             })),
           },
         })
@@ -271,7 +294,11 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
           source: 'sensors',
           minzoom: 15,
           layout: {
-            'icon-image': ['concat', ['get', 'kind'], '-', ['get', 'type']],
+            'icon-image': [
+              'coalesce',
+              ['image', ['concat', ['get', 'kind'], '-', ['get', 'type']]],
+              ['image', ['concat', 'sq-',            ['get', 'type']]],
+            ],
             'icon-allow-overlap': true,
             'icon-size': 1,
           },
@@ -291,33 +318,58 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
         projectsRef.current.forEach(p => renderProjectZone(map, mapboxgl, p))
       })
 
-      map.on('click', (e: any) => {
+      // Freehand drawing — mousedown → drag → mouseup
+      let isDrawing = false
+      let lastPixel: { x: number; y: number } | null = null
+
+      map.on('mousedown', (e: any) => {
         if (!drawModeRef.current) return
-        const c = [e.lngLat.lng, e.lngLat.lat]
-        drawCoordsRef.current.push(c)
-        const dot = document.createElement('div')
-        dot.style.cssText = 'width:10px;height:10px;border-radius:50%;background:#0070f3;border:2px solid white;box-shadow:0 0 0 2px rgba(0,112,243,0.3);pointer-events:none;'
-        drawMarkersRef.current.push(new mapboxgl.Marker({ element: dot }).setLngLat(c as [number, number]).addTo(map))
-        if (drawCoordsRef.current.length >= 2) {
-          updateDrawLine(map, drawCoordsRef.current)
-        }
+        isDrawing = true
+        lastPixel = { x: e.point.x, y: e.point.y }
+        drawCoordsRef.current = [[e.lngLat.lng, e.lngLat.lat]]
+        map.dragPan.disable()
       })
 
-      map.on('dblclick', (e: any) => {
-        if (!drawModeRef.current || drawCoordsRef.current.length < 3) return
-        e.preventDefault()
-        const closed = [...drawCoordsRef.current, drawCoordsRef.current[0]]
-        updateDrawLine(map, closed, true)
-        const savedCoords = [...drawCoordsRef.current]
-        // Solo eliminar los marcadores (puntos) — el polígono permanece visible
-        drawMarkersRef.current.forEach(m => m.remove())
-        drawMarkersRef.current = []
-        drawCoordsRef.current = []
-        onZoneComplete(savedCoords)
+      map.on('mousemove', (e: any) => {
+        if (!drawModeRef.current || !isDrawing) return
+        if (lastPixel) {
+          const dx = e.point.x - lastPixel.x
+          const dy = e.point.y - lastPixel.y
+          if (dx * dx + dy * dy < 64) return // menos de 8 px, ignorar
+        }
+        lastPixel = { x: e.point.x, y: e.point.y }
+        drawCoordsRef.current.push([e.lngLat.lng, e.lngLat.lat])
+        if (drawCoordsRef.current.length >= 2) updateDrawLine(map, drawCoordsRef.current)
       })
+
+      const finishDraw = () => {
+        if (!isDrawing) return
+        isDrawing = false
+        lastPixel = null
+        map.dragPan.enable()
+        const coords = drawCoordsRef.current
+        if (coords.length < 3) { clearDraw(map); return }
+        const saved = [...coords]
+        drawCoordsRef.current = []
+        updateDrawLine(map, saved) // redibuja el polígono cerrado final
+        onZoneComplete(saved)
+      }
+
+      map.on('mouseup', finishDraw)
+      // Si el cursor sale del canvas durante el dibujo, cerrar igualmente
+      map.getCanvas().addEventListener('mouseleave', finishDraw)
 
       mapRef.current = map
     })
+    return () => {
+      destroyed = true
+      if (handleWindowResize) window.removeEventListener('resize', handleWindowResize)
+      if (mapRef.current) {
+        mapRef.current.remove()
+        mapRef.current = null
+        mapLoadedRef.current = false
+      }
+    }
   }, [updateDrawLine, onZoneComplete, renderProjectZone])
 
   // Cuando pendingCoords se vacía (proyecto creado o cancelado), limpiar el polígono dibujado
@@ -437,24 +489,27 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
     }
   }, [temperaturaVisible])
 
-  // Cursor on draw mode change
+  // Cursor + dragPan on draw mode change
   useEffect(() => {
-    if (!mapRef.current) return
-    mapRef.current.getCanvas().style.cursor = drawMode ? 'crosshair' : ''
+    const map = mapRef.current
+    if (!map) return
+    map.getCanvas().style.cursor = drawMode ? 'crosshair' : ''
+    if (!drawMode) map.dragPan.enable() // restaurar si se canceló mid-draw
   }, [drawMode])
 
-  // Ocultar/mostrar sensors según modo y proyecto seleccionado
+  // Ocultar/mostrar sensors según modo, proyecto seleccionado y toggle manual
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
     const toggle = () => {
-      const v = mapMode === 'explorar' || (mapMode === 'proyectos' && selectedProjectId) ? 'visible' : 'none'
+      const modeOk = mapMode === 'explorar' || (mapMode === 'proyectos' && selectedProjectId)
+      const v = modeOk && sensorsVisible ? 'visible' : 'none'
       if (map.getLayer('sensors-dots'))  map.setLayoutProperty('sensors-dots',  'visibility', v)
       if (map.getLayer('sensors-icons')) map.setLayoutProperty('sensors-icons', 'visibility', v)
     }
     if (map.isStyleLoaded()) toggle()
     else map.once('load', toggle)
-  }, [mapMode, selectedProjectId])
+  }, [mapMode, selectedProjectId, sensorsVisible])
 
   // Filtrar sensores al polígono del proyecto seleccionado (o usar device markers filtrados)
   useEffect(() => {
@@ -478,17 +533,18 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
         .map(s => ({
           type: 'Feature' as const,
           geometry: { type: 'Point' as const, coordinates: [s.lng, s.lat] },
-          properties: { id: s.id, type: s.type, kind: s.kind, label: s.label },
+          properties: { id: s.id, type: s.type, kind: s.kind, label: s.label, layerId: s.layerId ?? '' },
         }))
     } else {
       features = activeSensors.map(s => ({
         type: 'Feature' as const,
         geometry: { type: 'Point' as const, coordinates: [s.lng, s.lat] },
-        properties: { id: s.id, type: s.type, kind: s.kind, label: s.label },
+        properties: { id: s.id, type: s.type, kind: s.kind, label: s.label, layerId: s.layerId ?? '' },
       }))
     }
 
     source.setData({ type: 'FeatureCollection', features })
+    mapRef.current?.resize()
   }, [selectedProjectId, projects, projectDeviceMarkers, activeSensors])
 
   // Ajustar viewport al proyecto seleccionado
@@ -531,5 +587,224 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
     }
   }, [projects, mapMode, renderProjectZone])
 
-  return <div ref={containerRef} className="absolute inset-0" />
+  // ── Opacidad por capa ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoadedRef.current || !layerOpacities) return
+
+    // Capas sistema con su propia capa Mapbox
+    const SYSTEM_TARGETS: Record<string, Array<{ id: string; prop: string }>> = {
+      afluencia:   [{ id: 'afluencia-heat',      prop: 'heatmap-opacity' }],
+      temperatura: [{ id: 'temperatura-heat',    prop: 'heatmap-opacity' }],
+      bici:        [{ id: 'cycling-tiles-layer', prop: 'raster-opacity'  }],
+    }
+    for (const [layerId, opacity] of Object.entries(layerOpacities)) {
+      const targets = SYSTEM_TARGETS[layerId]
+      if (!targets) continue
+      for (const { id, prop } of targets) {
+        if (map.getLayer(id)) map.setPaintProperty(id, prop, opacity / 100)
+      }
+    }
+
+    // Sensores: expresión case para aplicar opacidad por layerId
+    // Las capas custom tienen su propio valor; los sensores base usan la opacidad global de 'sensores'
+    const baseOpacity = (layerOpacities['sensores'] ?? 100) / 100
+    const customCases: any[] = []
+    for (const [id, opacity] of Object.entries(layerOpacities)) {
+      if (!id.startsWith('custom_')) continue
+      customCases.push(['==', ['get', 'layerId'], id], opacity / 100)
+    }
+    const opacityExpr = customCases.length > 0
+      ? ['case', ...customCases, baseOpacity]
+      : baseOpacity
+
+    if (map.getLayer('sensors-dots'))  map.setPaintProperty('sensors-dots',  'icon-opacity', opacityExpr)
+    if (map.getLayer('sensors-icons')) map.setPaintProperty('sensors-icons', 'icon-opacity', opacityExpr)
+  }, [layerOpacities])
+
+  // ── Capas GeoPackage ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !gpkgLayers?.length) return
+
+    const applyGpkgLayers = () => {
+    for (const layer of gpkgLayers) {
+      const srcId = `gpkg-src-${layer.id}`
+      const opacity = layer.opacity / 100
+      const visibility = layer.active ? 'visible' : 'none'
+
+      // Crear o actualizar la fuente GeoJSON
+      if (map.getSource(srcId)) {
+        ;(map.getSource(srcId) as any).setData(layer.geojson)
+      } else {
+        map.addSource(srcId, { type: 'geojson', data: layer.geojson as any })
+      }
+
+      // Añadir capas de renderizado según tipo de geometría
+      const addLayerIfMissing = (id: string, def: object) => {
+        if (!map.getLayer(id)) map.addLayer(def as any)
+      }
+
+      const { geometryType: gt, color, colorScheme } = layer
+
+      // Expresión de color: match por categoría si hay colorScheme, o color fijo
+      // Importante: si los valores originales eran números, usar números en el match
+      // para que Mapbox los compare correctamente (number !== string en expressions).
+      const colorExpr: any = colorScheme
+        ? [
+            'match',
+            ['get', colorScheme.property],
+            ...Object.entries(colorScheme.categories).flatMap(([k, v]) =>
+              [colorScheme.isNumeric ? Number(k) : k, v]
+            ),
+            color,  // fallback
+          ]
+        : color
+
+      if (gt === 'point' || gt === 'mixed') {
+        const cId = `${layer.id}-circle`
+        addLayerIfMissing(cId, {
+          id: cId, type: 'circle', source: srcId,
+          filter: ['in', ['geometry-type'], ['literal', ['Point', 'MultiPoint']]],
+          paint: { 'circle-radius': 5, 'circle-color': colorExpr, 'circle-opacity': opacity, 'circle-stroke-width': 1, 'circle-stroke-color': '#fff' },
+          layout: { visibility },
+        })
+        if (map.getLayer(cId)) {
+          map.setPaintProperty(cId, 'circle-color', colorExpr)
+          map.setPaintProperty(cId, 'circle-opacity', opacity)
+          map.setLayoutProperty(cId, 'visibility', visibility)
+        }
+      }
+
+      if (gt === 'linestring' || gt === 'mixed') {
+        const lId = `${layer.id}-line`
+        addLayerIfMissing(lId, {
+          id: lId, type: 'line', source: srcId,
+          filter: ['in', ['geometry-type'], ['literal', ['LineString', 'MultiLineString']]],
+          paint: { 'line-color': colorExpr, 'line-width': 2, 'line-opacity': opacity },
+          layout: { visibility, 'line-join': 'round', 'line-cap': 'round' },
+        })
+        if (map.getLayer(lId)) {
+          map.setPaintProperty(lId, 'line-color', colorExpr)
+          map.setPaintProperty(lId, 'line-opacity', opacity)
+          map.setLayoutProperty(lId, 'visibility', visibility)
+        }
+      }
+
+      if (gt === 'polygon' || gt === 'mixed') {
+        const fId = `${layer.id}-fill`
+        const oId = `${layer.id}-fill-outline`
+        addLayerIfMissing(fId, {
+          id: fId, type: 'fill', source: srcId,
+          filter: ['in', ['geometry-type'], ['literal', ['Polygon', 'MultiPolygon']]],
+          paint: { 'fill-color': colorExpr, 'fill-opacity': opacity * 0.35 },
+          layout: { visibility },
+        })
+        addLayerIfMissing(oId, {
+          id: oId, type: 'line', source: srcId,
+          filter: ['in', ['geometry-type'], ['literal', ['Polygon', 'MultiPolygon']]],
+          paint: { 'line-color': colorExpr, 'line-width': 1.5, 'line-opacity': opacity },
+          layout: { visibility },
+        })
+        if (map.getLayer(fId)) {
+          map.setPaintProperty(fId, 'fill-color', colorExpr)
+          map.setPaintProperty(fId, 'fill-opacity', opacity * 0.35)
+          map.setLayoutProperty(fId, 'visibility', visibility)
+        }
+        if (map.getLayer(oId)) {
+          map.setPaintProperty(oId, 'line-color', colorExpr)
+          map.setPaintProperty(oId, 'line-opacity', opacity)
+          map.setLayoutProperty(oId, 'visibility', visibility)
+        }
+      }
+    }
+    } // end applyGpkgLayers
+
+    if (mapLoadedRef.current) {
+      applyGpkgLayers()
+    } else {
+      map.once('load', applyGpkgLayers)
+      return () => map.off('load', applyGpkgLayers)
+    }
+  }, [gpkgLayers])
+
+  // ── Registrar iconos de tipos personalizados al importar ─────────────────────
+  useEffect(() => {
+    if (!customKindIcons || Object.keys(customKindIcons).length === 0) return
+    const map = mapRef.current
+    if (!map || !mapLoadedRef.current) return
+
+    for (const [kind, shapeId] of Object.entries(customKindIcons)) {
+      if (map.hasImage(`${kind}-ok`)) continue   // ya registrado
+      const shape = ICON_SHAPE_MAP[shapeId]
+      if (!shape) continue
+      loadMapImage(map, `${kind}-ok`,  buildSvgIcon(shape, '#00a63e'))
+      loadMapImage(map, `${kind}-err`, buildSvgIcon(shape, '#dd0000'))
+    }
+  }, [customKindIcons])
+
+  // ── Leyenda para capas GPKG con esquema de color ─────────────────────────────
+  const legendLayers = useMemo(
+    () => (gpkgLayers ?? []).filter(l => l.active && l.colorScheme),
+    [gpkgLayers],
+  )
+
+  return (
+    <div className="absolute inset-0">
+      <div ref={containerRef} className="absolute inset-0" />
+
+      {legendLayers.length > 0 && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 32,
+            left: 12,
+            zIndex: 10,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+            pointerEvents: 'none',
+          }}
+        >
+          {legendLayers.map(layer => (
+            <div
+              key={layer.id}
+              style={{
+                background: 'rgba(255,255,255,0.93)',
+                borderRadius: 8,
+                boxShadow: '0 1px 6px rgba(0,0,0,0.18)',
+                padding: '8px 12px',
+                minWidth: 160,
+                maxWidth: 240,
+              }}
+            >
+              <div style={{ fontWeight: 700, fontSize: 11, color: '#333', marginBottom: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {layer.label}
+              </div>
+              <div style={{ fontSize: 10, color: '#555', marginBottom: 4, opacity: 0.7 }}>
+                {layer.colorScheme!.property}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {Object.entries(layer.colorScheme!.categories).map(([val, col]) => (
+                  <div key={val} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span
+                      style={{
+                        width: 12,
+                        height: 12,
+                        borderRadius: layer.geometryType === 'point' ? '50%' : 3,
+                        background: col,
+                        flexShrink: 0,
+                        border: '1px solid rgba(0,0,0,0.12)',
+                      }}
+                    />
+                    <span style={{ fontSize: 10, color: '#222', lineHeight: 1.3, wordBreak: 'break-word' }}>{val}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
