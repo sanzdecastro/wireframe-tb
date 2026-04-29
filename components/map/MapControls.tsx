@@ -10,9 +10,11 @@ interface MapControlsProps {
   onLayersOpen: () => void
   onFiltersOpen: () => void
   activeSensorFilterCount?: number
+  isochroneMode?: boolean
+  onIsochroneToggle?: () => void
 }
 
-export function MapControls({ mode, drawMode, onModeChange, onDrawToggle, onLayersOpen, onFiltersOpen, activeSensorFilterCount = 0 }: MapControlsProps) {
+export function MapControls({ mode, drawMode, onModeChange, onDrawToggle, onLayersOpen, onFiltersOpen, activeSensorFilterCount = 0, isochroneMode = false, onIsochroneToggle }: MapControlsProps) {
   return (
     <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center gap-2 pointer-events-auto">
       {/* Mode toggle */}
@@ -78,6 +80,21 @@ export function MapControls({ mode, drawMode, onModeChange, onDrawToggle, onLaye
               </span>
             )}
           </button>
+          <div className="w-px h-4 bg-black/12 mx-0.5" />
+          <button
+            onClick={onIsochroneToggle}
+            title="Área a pie en 15 min"
+            className={`w-fit h-7 px-3 gap-2 text-xs border-none rounded flex items-center justify-center cursor-pointer transition-colors ${
+              isochroneMode ? 'bg-violet-600 text-white' : 'bg-transparent text-neutral-500 hover:bg-black/[0.05]'
+            }`}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="8" cy="6" r="2.2"/>
+              <path d="M8 8.5c-3 0-5 1.5-5 3.5h10c0-2-2-3.5-5-3.5z"/>
+              <path d="M13 3a5.5 5.5 0 010 6M3 3a5.5 5.5 0 000 6" opacity=".5"/>
+            </svg>
+            15 min a pie
+          </button>
         </div>
       )}
 
@@ -85,6 +102,13 @@ export function MapControls({ mode, drawMode, onModeChange, onDrawToggle, onLaye
       {drawMode && (
         <div className="bg-white border border-black/12 rounded px-3 py-1.5 text-[11px] text-neutral-500 shadow-sm pointer-events-none">
           Haz clic para definir el área · Doble clic para cerrar
+        </div>
+      )}
+
+      {/* Isochrone mode hint */}
+      {isochroneMode && !drawMode && (
+        <div className="bg-violet-600 text-white rounded px-3 py-1.5 text-[11px] shadow-sm pointer-events-none">
+          Haz clic en el mapa para calcular el área a 15 min a pie
         </div>
       )}
     </div>

@@ -66,21 +66,30 @@ export interface KpiCatalogCategory {
 }
 
 export interface GpkgColorScheme {
-  property:   string
-  categories: Record<string, string>  // valor (como string) → color hex
-  isNumeric:  boolean                 // true cuando los valores originales son números
+  property: string
+  type:     'categorical' | 'gradient'
+
+  // ── Categórico ────────────────────────────────────────────────────────────
+  categories?: Record<string, string>  // valor (string) → color hex
+  isNumeric?:  boolean
+
+  // ── Gradiente (propiedad numérica continua) ───────────────────────────────
+  stops?: Array<[number, string]>      // [ valor, color ] ordenados ASC
 }
 
 export interface GpkgFeatureLayer {
   id:           string
   label:        string
   tableName:    string
-  geojson:      object   // GeoJSON FeatureCollection
-  geometryType: 'point' | 'linestring' | 'polygon' | 'mixed'
+  geojson:      object   // GeoJSON FeatureCollection (vacío para capas raster)
+  geometryType: 'point' | 'linestring' | 'polygon' | 'mixed' | 'raster'
   color:        string   // color fallback (cuando no hay colorScheme)
   active:       boolean
   opacity:      number   // 0-100
   colorScheme?: GpkgColorScheme  // esquema categórico auto-detectado
+  // Solo para geometryType === 'raster'
+  tileBounds?:    [number, number, number, number]  // WGS84 [minLng, minLat, maxLng, maxLat]
+  tileZoomRange?: [number, number]                  // [minZoom, maxZoom]
 }
 
 export interface MapLayer {

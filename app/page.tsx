@@ -48,6 +48,8 @@ export default function Home() {
   const [gpkgLayers, setGpkgLayers] = useState<GpkgFeatureLayer[]>([])
   // Opacidades por capa: layerId → 0-100
   const [layerOpacities, setLayerOpacities] = useState<Record<string, number>>({})
+  // Isócrona
+  const [isochroneMode, setIsochroneMode] = useState(false)
 
   // Ref estable para que handleSensorClick acceda a allSensors sin re-crearse
   const allSensorsRef = useRef<Sensor[]>(SENSORS)
@@ -373,6 +375,7 @@ export default function Home() {
               customKindIcons={customKindIcons}
               layerOpacities={layerOpacities}
               gpkgLayers={gpkgLayers}
+              isochroneMode={isochroneMode}
             />
 
             <MapControls
@@ -383,6 +386,8 @@ export default function Home() {
               onLayersOpen={() => setPanel('layers')}
               onFiltersOpen={() => setPanel('sensor-filters')}
               activeSensorFilterCount={mapMode === 'explorar' ? activeSensorFilterCount : 0}
+              isochroneMode={isochroneMode}
+              onIsochroneToggle={() => setIsochroneMode(v => !v)}
             />
 
             {/* Legend */}

@@ -9,6 +9,33 @@ import { inferKindFromName } from '@/lib/csvImport/normalizers'
 import { ICON_SHAPES, DEFAULT_ICON_SHAPE } from '@/lib/sensorIconShapes'
 import { SENSORS } from '@/lib/data'
 
+/**
+ * Lee un archivo de texto detectando automáticamente el encoding por el BOM:
+ *   - UTF-16 LE (FF FE) → decodifica con 'utf-16le'
+ *   - UTF-16 BE (FE FF) → decodifica con 'utf-16be'
+ *   - UTF-8 con BOM (EF BB BF) → decodifica con 'utf-8' quitando el BOM
+ *   - Sin BOM → 'utf-8' estándar
+ */
+async function readFileAsText(file: File): Promise<string> {
+  const buf   = await file.arrayBuffer()
+  const bytes = new Uint8Array(buf)
+
+  // UTF-16 LE: BOM = FF FE
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return new TextDecoder('utf-16le').decode(buf)
+  }
+  // UTF-16 BE: BOM = FE FF
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+    return new TextDecoder('utf-16be').decode(buf)
+  }
+  // UTF-8 con BOM: EF BB BF (quitar BOM antes de devolver)
+  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    return new TextDecoder('utf-8').decode(buf.slice(3))
+  }
+  // Sin BOM: UTF-8 estándar
+  return new TextDecoder('utf-8').decode(buf)
+}
+
 const BASE_KINDS = ['banco', 'luminaria', 'jardinera'] as const
 const KIND_LABELS: Record<string, string> = {
   banco:     'Banco',
@@ -173,6 +200,8 @@ export function LayersPanel({
         resetForm()
         setStep('list')
       } catch (err) {
+        console.error('[GPKG import error]', err)
+        if (err instanceof Error) console.error('[GPKG stack]', err.stack)
         setGpkgError(String(err))
       } finally {
         setImporting(false)
@@ -188,7 +217,7 @@ export function LayersPanel({
         ? (addCustomKind.trim().toLowerCase().replace(/\s+/g, '_') || 'banco')
         : addKind
       try {
-        const text   = await addFile.text()
+        const text   = await readFileAsText(addFile)
         const result = await importCsv({
           csvContent:      text,
           existingSensors: [...SENSORS, ...importedSensors],
@@ -422,7 +451,11 @@ export function LayersPanel({
                     gpkg
                   </span>
                 </div>
-                <span className="text-[10px] text-neutral-400">{layer.geometryType} · {(layer.geojson as any).features?.length ?? 0} features</span>
+                <span className="text-[10px] text-neutral-400">
+                {layer.geometryType === 'raster'
+                  ? 'raster · tiles'
+                  : `${layer.geometryType} · ${(layer.geojson as any).features?.length ?? 0} features`}
+              </span>
               </div>
               <Toggle on={layer.active} onToggle={() => onGpkgLayerToggle(layer.id)} />
             </div>

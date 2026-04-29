@@ -5,6 +5,7 @@ import { MAPBOX_TOKEN, SENSORS, MAP_CENTER, MAP_ZOOM, AFLUENCIA_DATA, TEMPERATUR
 import { Project, MapMode, Sensor } from '@/types'
 import { ICON_SHAPE_MAP } from '@/lib/sensorIconShapes'
 import type { GpkgFeatureLayer } from '@/types'
+import { tileUrlRegistry, EMPTY_TILE } from '@/lib/gpkgImport/tileServer'
 
 // ── Helpers de iconos (sin dependencia del mapa, reutilizables) ───────────────
 
@@ -62,9 +63,11 @@ interface MapViewProps {
   customKindIcons?: Record<string, string>   // kind → shapeId
   layerOpacities?:  Record<string, number>   // panelLayerId → 0-100
   gpkgLayers?:      GpkgFeatureLayer[]
+  isochroneMode?:   boolean
+  isochroneMinutes?: number
 }
 
-export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedProjectId, onZoneComplete, onProjectClick, onSensorClick, sensorsVisible = true, heatmapVisible = false, temperaturaVisible = false, cyclingLayerVisible = false, projectDeviceMarkers = null, filteredSensors, customKindIcons, layerOpacities, gpkgLayers }: MapViewProps) {
+export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedProjectId, onZoneComplete, onProjectClick, onSensorClick, sensorsVisible = true, heatmapVisible = false, temperaturaVisible = false, cyclingLayerVisible = false, projectDeviceMarkers = null, filteredSensors, customKindIcons, layerOpacities, gpkgLayers, isochroneMode = false, isochroneMinutes = 15 }: MapViewProps) {
   const activeSensors = filteredSensors ?? SENSORS
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
@@ -78,11 +81,15 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
   const onProjectClickRef = useRef(onProjectClick)
   const onSensorClickRef = useRef(onSensorClick)
   const projectsRef = useRef(projects)
+  const isochroneModeRef = useRef(isochroneMode)
+  const isochroneMinutesRef = useRef(isochroneMinutes)
   onProjectClickRef.current = onProjectClick
   onSensorClickRef.current = onSensorClick
   projectsRef.current = projects
   drawModeRef.current = drawMode
   mapModeRef.current = mapMode
+  isochroneModeRef.current = isochroneMode
+  isochroneMinutesRef.current = isochroneMinutes
 
   const updateDrawLine = useCallback((map: any, coords: number[][]) => {
     const hasArea = coords.length >= 3
@@ -207,7 +214,7 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
     let destroyed = false
-    let handleWindowResize: (() => void) | null = null
+    let resizeObserver: ResizeObserver | null = null
     import('mapbox-gl').then(({ default: mapboxgl }) => {
       if (destroyed || mapRef.current) return
       mapboxglRef.current = mapboxgl
@@ -221,14 +228,29 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
         zoom: MAP_ZOOM,
         attributionControl: false,
         trackResize: false,
+        // Resolver tiles GPKG desde blob URLs pre-extraídas (compatible con mapbox-gl v2)
+        transformRequest: (url: string) => {
+          if (url.startsWith('gpkg://')) {
+            const path    = url.replace('gpkg://', '')
+            const blobUrl = tileUrlRegistry.get(path)
+            return { url: blobUrl ?? EMPTY_TILE }
+          }
+          return { url }
+        },
       })
 
-      handleWindowResize = () => map.resize()
-      window.addEventListener('resize', handleWindowResize)
+      // ResizeObserver sobre el contenedor: detecta cualquier cambio de tamaño
+      // (window resize, panel lateral, re-renders de React) y sincroniza el canvas.
+      resizeObserver = new ResizeObserver(() => { map.resize() })
+      resizeObserver.observe(containerRef.current!)
       map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'bottom-right')
       map.addControl(new mapboxgl.AttributionControl({ compact: true }))
 
       map.on('load', async () => {
+        // Sincronizar canvas con el tamaño real del contenedor una vez cargado el estilo.
+        // El useEffect de init corre antes de que el layout flex esté estabilizado,
+        // así que es aquí donde el resize inicial es seguro.
+        map.resize()
         mapLoadedRef.current = true
         const makeSquare = (color: string) => {
           const c = document.createElement('canvas')
@@ -363,7 +385,7 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
     })
     return () => {
       destroyed = true
-      if (handleWindowResize) window.removeEventListener('resize', handleWindowResize)
+      resizeObserver?.disconnect()
       if (mapRef.current) {
         mapRef.current.remove()
         mapRef.current = null
@@ -544,7 +566,6 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
     }
 
     source.setData({ type: 'FeatureCollection', features })
-    mapRef.current?.resize()
   }, [selectedProjectId, projects, projectDeviceMarkers, activeSensors])
 
   // Ajustar viewport al proyecto seleccionado
@@ -622,102 +643,228 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
     if (map.getLayer('sensors-icons')) map.setPaintProperty('sensors-icons', 'icon-opacity', opacityExpr)
   }, [layerOpacities])
 
+  // ── Isócrona (área a pie en N minutos) ───────────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+
+    const SRC  = 'isochrone-src'
+    const FILL = 'isochrone-fill'
+    const LINE = 'isochrone-line'
+    const PIN  = 'isochrone-pin'
+
+    // Limpiar capas/fuentes si se desactiva el modo
+    if (!isochroneMode) {
+      if (map.getLayer(FILL)) map.removeLayer(FILL)
+      if (map.getLayer(LINE)) map.removeLayer(LINE)
+      if (map.getSource(SRC))  map.removeSource(SRC)
+      // Eliminar marcador de origen si existe
+      const pinEl = document.getElementById('isochrone-pin-el')
+      if (pinEl) pinEl.remove()
+      return
+    }
+
+    // Cursor crosshair mientras el modo está activo
+    map.getCanvas().style.cursor = 'crosshair'
+
+    const handleClick = async (e: any) => {
+      if (!isochroneModeRef.current) return
+      const { lng, lat } = e.lngLat
+
+      // Marcador visual del punto de origen
+      const existing = document.getElementById('isochrone-pin-el')
+      if (existing) existing.remove()
+      const pinEl = document.createElement('div')
+      pinEl.id = 'isochrone-pin-el'
+      pinEl.style.cssText = `
+        width:14px; height:14px; border-radius:50%;
+        background:#7c3aed; border:2px solid white;
+        box-shadow:0 0 0 3px rgba(124,58,237,0.35);
+        cursor:crosshair;
+      `
+      new mapboxglRef.current.Marker({ element: pinEl })
+        .setLngLat([lng, lat])
+        .addTo(map)
+
+      // Llamada a Mapbox Isochrone API
+      const token   = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!
+      const minutes = isochroneMinutesRef.current
+      const url     = `https://api.mapbox.com/isochrone/v1/mapbox/walking/${lng},${lat}?contours_minutes=${minutes}&polygons=true&access_token=${token}`
+
+      try {
+        const res  = await fetch(url)
+        if (!res.ok) throw new Error(`Isochrone API error: ${res.status}`)
+        const data = await res.json()
+
+        if (!mapRef.current) return   // desmontado durante el fetch
+
+        // Actualizar o crear fuente GeoJSON
+        if (map.getSource(SRC)) {
+          ;(map.getSource(SRC) as any).setData(data)
+        } else {
+          map.addSource(SRC, { type: 'geojson', data })
+          map.addLayer({
+            id:     FILL,
+            type:   'fill',
+            source: SRC,
+            paint:  {
+              'fill-color':   '#7c3aed',
+              'fill-opacity': 0.12,
+            },
+          })
+          map.addLayer({
+            id:     LINE,
+            type:   'line',
+            source: SRC,
+            paint:  {
+              'line-color':   '#7c3aed',
+              'line-width':   2,
+              'line-opacity': 0.7,
+            },
+          })
+        }
+      } catch (err) {
+        console.error('[Isochrone]', err)
+      }
+    }
+
+    map.on('click', handleClick)
+
+    return () => {
+      map.off('click', handleClick)
+      map.getCanvas().style.cursor = ''
+    }
+  }, [isochroneMode])
+
   // ── Capas GeoPackage ──────────────────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current
     if (!map || !gpkgLayers?.length) return
 
     const applyGpkgLayers = () => {
-    for (const layer of gpkgLayers) {
-      const srcId = `gpkg-src-${layer.id}`
-      const opacity = layer.opacity / 100
-      const visibility = layer.active ? 'visible' : 'none'
+      for (const layer of gpkgLayers) {
+        const opacity    = layer.opacity / 100
+        const visibility = layer.active ? 'visible' : 'none'
 
-      // Crear o actualizar la fuente GeoJSON
-      if (map.getSource(srcId)) {
-        ;(map.getSource(srcId) as any).setData(layer.geojson)
-      } else {
-        map.addSource(srcId, { type: 'geojson', data: layer.geojson as any })
-      }
+        // ── Capa raster (tiles GPKG) ────────────────────────────────────────
+        if (layer.geometryType === 'raster') {
+          const srcId = `gpkg-raster-src-${layer.id}`
+          const lyrId = `gpkg-raster-lyr-${layer.id}`
 
-      // Añadir capas de renderizado según tipo de geometría
-      const addLayerIfMissing = (id: string, def: object) => {
-        if (!map.getLayer(id)) map.addLayer(def as any)
-      }
+          if (!map.getSource(srcId)) {
+            map.addSource(srcId, {
+              type:     'raster',
+              tiles:    [`gpkg://${layer.id}/{z}/{x}/{y}`],
+              bounds:   layer.tileBounds,
+              minzoom:  layer.tileZoomRange?.[0] ?? 0,
+              maxzoom:  layer.tileZoomRange?.[1] ?? 18,
+              tileSize: 256,
+            } as any)
+          }
 
-      const { geometryType: gt, color, colorScheme } = layer
+          if (!map.getLayer(lyrId)) {
+            map.addLayer({
+              id:     lyrId,
+              type:   'raster',
+              source: srcId,
+              paint:  { 'raster-opacity': opacity },
+              layout: { visibility },
+            })
+          } else {
+            map.setPaintProperty(lyrId, 'raster-opacity', opacity)
+            map.setLayoutProperty(lyrId, 'visibility', visibility)
+          }
+          continue
+        }
 
-      // Expresión de color: match por categoría si hay colorScheme, o color fijo
-      // Importante: si los valores originales eran números, usar números en el match
-      // para que Mapbox los compare correctamente (number !== string en expressions).
-      const colorExpr: any = colorScheme
-        ? [
-            'match',
-            ['get', colorScheme.property],
-            ...Object.entries(colorScheme.categories).flatMap(([k, v]) =>
-              [colorScheme.isNumeric ? Number(k) : k, v]
-            ),
-            color,  // fallback
-          ]
-        : color
+        // ── Capa vectorial (GeoJSON) ────────────────────────────────────────
+        const srcId = `gpkg-src-${layer.id}`
 
-      if (gt === 'point' || gt === 'mixed') {
-        const cId = `${layer.id}-circle`
-        addLayerIfMissing(cId, {
-          id: cId, type: 'circle', source: srcId,
-          filter: ['in', ['geometry-type'], ['literal', ['Point', 'MultiPoint']]],
-          paint: { 'circle-radius': 5, 'circle-color': colorExpr, 'circle-opacity': opacity, 'circle-stroke-width': 1, 'circle-stroke-color': '#fff' },
-          layout: { visibility },
-        })
-        if (map.getLayer(cId)) {
-          map.setPaintProperty(cId, 'circle-color', colorExpr)
-          map.setPaintProperty(cId, 'circle-opacity', opacity)
-          map.setLayoutProperty(cId, 'visibility', visibility)
+        if (map.getSource(srcId)) {
+          ;(map.getSource(srcId) as any).setData(layer.geojson)
+        } else {
+          map.addSource(srcId, { type: 'geojson', data: layer.geojson as any })
+        }
+
+        const addLayerIfMissing = (id: string, def: object) => {
+          if (!map.getLayer(id)) map.addLayer(def as any)
+        }
+
+        const { geometryType: gt, color, colorScheme } = layer
+
+        const colorExpr: any = !colorScheme
+          ? color
+          : colorScheme.type === 'gradient'
+            ? [
+                'interpolate', ['linear'], ['get', colorScheme.property],
+                ...colorScheme.stops!.flatMap(([v, c]) => [v, c]),
+              ]
+            : [
+                'match',
+                ['get', colorScheme.property],
+                ...Object.entries(colorScheme.categories!).flatMap(([k, v]) =>
+                  [colorScheme.isNumeric ? Number(k) : k, v]
+                ),
+                color,
+              ]
+
+        if (gt === 'point' || gt === 'mixed') {
+          const cId = `${layer.id}-circle`
+          addLayerIfMissing(cId, {
+            id: cId, type: 'circle', source: srcId,
+            filter: ['in', ['geometry-type'], ['literal', ['Point', 'MultiPoint']]],
+            paint: { 'circle-radius': 5, 'circle-color': colorExpr, 'circle-opacity': opacity, 'circle-stroke-width': 1, 'circle-stroke-color': '#fff' },
+            layout: { visibility },
+          })
+          if (map.getLayer(cId)) {
+            map.setPaintProperty(cId, 'circle-color', colorExpr)
+            map.setPaintProperty(cId, 'circle-opacity', opacity)
+            map.setLayoutProperty(cId, 'visibility', visibility)
+          }
+        }
+
+        if (gt === 'linestring' || gt === 'mixed') {
+          const lId = `${layer.id}-line`
+          addLayerIfMissing(lId, {
+            id: lId, type: 'line', source: srcId,
+            filter: ['in', ['geometry-type'], ['literal', ['LineString', 'MultiLineString']]],
+            paint: { 'line-color': colorExpr, 'line-width': 2, 'line-opacity': opacity },
+            layout: { visibility, 'line-join': 'round', 'line-cap': 'round' },
+          })
+          if (map.getLayer(lId)) {
+            map.setPaintProperty(lId, 'line-color', colorExpr)
+            map.setPaintProperty(lId, 'line-opacity', opacity)
+            map.setLayoutProperty(lId, 'visibility', visibility)
+          }
+        }
+
+        if (gt === 'polygon' || gt === 'mixed') {
+          const fId = `${layer.id}-fill`
+          const oId = `${layer.id}-fill-outline`
+          addLayerIfMissing(fId, {
+            id: fId, type: 'fill', source: srcId,
+            filter: ['in', ['geometry-type'], ['literal', ['Polygon', 'MultiPolygon']]],
+            paint: { 'fill-color': colorExpr, 'fill-opacity': opacity * 0.35 },
+            layout: { visibility },
+          })
+          addLayerIfMissing(oId, {
+            id: oId, type: 'line', source: srcId,
+            filter: ['in', ['geometry-type'], ['literal', ['Polygon', 'MultiPolygon']]],
+            paint: { 'line-color': colorExpr, 'line-width': 1.5, 'line-opacity': opacity },
+            layout: { visibility },
+          })
+          if (map.getLayer(fId)) {
+            map.setPaintProperty(fId, 'fill-color', colorExpr)
+            map.setPaintProperty(fId, 'fill-opacity', opacity * 0.35)
+            map.setLayoutProperty(fId, 'visibility', visibility)
+          }
+          if (map.getLayer(oId)) {
+            map.setPaintProperty(oId, 'line-color', colorExpr)
+            map.setPaintProperty(oId, 'line-opacity', opacity)
+            map.setLayoutProperty(oId, 'visibility', visibility)
+          }
         }
       }
-
-      if (gt === 'linestring' || gt === 'mixed') {
-        const lId = `${layer.id}-line`
-        addLayerIfMissing(lId, {
-          id: lId, type: 'line', source: srcId,
-          filter: ['in', ['geometry-type'], ['literal', ['LineString', 'MultiLineString']]],
-          paint: { 'line-color': colorExpr, 'line-width': 2, 'line-opacity': opacity },
-          layout: { visibility, 'line-join': 'round', 'line-cap': 'round' },
-        })
-        if (map.getLayer(lId)) {
-          map.setPaintProperty(lId, 'line-color', colorExpr)
-          map.setPaintProperty(lId, 'line-opacity', opacity)
-          map.setLayoutProperty(lId, 'visibility', visibility)
-        }
-      }
-
-      if (gt === 'polygon' || gt === 'mixed') {
-        const fId = `${layer.id}-fill`
-        const oId = `${layer.id}-fill-outline`
-        addLayerIfMissing(fId, {
-          id: fId, type: 'fill', source: srcId,
-          filter: ['in', ['geometry-type'], ['literal', ['Polygon', 'MultiPolygon']]],
-          paint: { 'fill-color': colorExpr, 'fill-opacity': opacity * 0.35 },
-          layout: { visibility },
-        })
-        addLayerIfMissing(oId, {
-          id: oId, type: 'line', source: srcId,
-          filter: ['in', ['geometry-type'], ['literal', ['Polygon', 'MultiPolygon']]],
-          paint: { 'line-color': colorExpr, 'line-width': 1.5, 'line-opacity': opacity },
-          layout: { visibility },
-        })
-        if (map.getLayer(fId)) {
-          map.setPaintProperty(fId, 'fill-color', colorExpr)
-          map.setPaintProperty(fId, 'fill-opacity', opacity * 0.35)
-          map.setLayoutProperty(fId, 'visibility', visibility)
-        }
-        if (map.getLayer(oId)) {
-          map.setPaintProperty(oId, 'line-color', colorExpr)
-          map.setPaintProperty(oId, 'line-opacity', opacity)
-          map.setLayoutProperty(oId, 'visibility', visibility)
-        }
-      }
-    }
     } // end applyGpkgLayers
 
     if (mapLoadedRef.current) {
@@ -781,26 +928,51 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
               <div style={{ fontWeight: 700, fontSize: 11, color: '#333', marginBottom: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {layer.label}
               </div>
-              <div style={{ fontSize: 10, color: '#555', marginBottom: 4, opacity: 0.7 }}>
+              <div style={{ fontSize: 10, color: '#555', marginBottom: 6, opacity: 0.7 }}>
                 {layer.colorScheme!.property}
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                {Object.entries(layer.colorScheme!.categories).map(([val, col]) => (
-                  <div key={val} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span
-                      style={{
-                        width: 12,
-                        height: 12,
+
+              {layer.colorScheme!.type === 'gradient' ? (
+                /* ── Leyenda de gradiente ── */
+                (() => {
+                  const stops = layer.colorScheme!.stops!
+                  const grad  = stops.map(([, c]) => c).join(', ')
+                  const min   = stops[0][0]
+                  const max   = stops[stops.length - 1][0]
+                  const fmt   = (v: number) =>
+                    Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(2)
+                  return (
+                    <div>
+                      <div style={{
+                        height: 10,
+                        borderRadius: 4,
+                        background: `linear-gradient(to right, ${grad})`,
+                        border: '1px solid rgba(0,0,0,0.1)',
+                        marginBottom: 3,
+                      }} />
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ fontSize: 9, color: '#555' }}>{fmt(min)}</span>
+                        <span style={{ fontSize: 9, color: '#555' }}>{fmt(max)}</span>
+                      </div>
+                    </div>
+                  )
+                })()
+              ) : (
+                /* ── Leyenda categórica ── */
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {Object.entries(layer.colorScheme!.categories!).map(([val, col]) => (
+                    <div key={val} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{
+                        width: 12, height: 12,
                         borderRadius: layer.geometryType === 'point' ? '50%' : 3,
-                        background: col,
-                        flexShrink: 0,
+                        background: col, flexShrink: 0,
                         border: '1px solid rgba(0,0,0,0.12)',
-                      }}
-                    />
-                    <span style={{ fontSize: 10, color: '#222', lineHeight: 1.3, wordBreak: 'break-word' }}>{val}</span>
-                  </div>
-                ))}
-              </div>
+                      }} />
+                      <span style={{ fontSize: 10, color: '#222', lineHeight: 1.3, wordBreak: 'break-word' }}>{val}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>
