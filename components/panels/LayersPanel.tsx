@@ -8,6 +8,7 @@ import { importCsv, ImportResult } from '@/lib/csvImport'
 import { inferKindFromName } from '@/lib/csvImport/normalizers'
 import { ICON_SHAPES, DEFAULT_ICON_SHAPE } from '@/lib/sensorIconShapes'
 import { SENSORS } from '@/lib/data'
+import { geojsonAdapter, AdapterPreview } from '@/lib/layerAdapters'
 
 /**
  * Lee un archivo de texto detectando automáticamente el encoding por el BOM:
@@ -145,6 +146,16 @@ export function LayersPanel({
   const [gpkgError, setGpkgError]         = useState<string | null>(null)
   const fileInputRef                      = useRef<HTMLInputElement>(null)
 
+  // GeoJSON adapter state
+  const [isGeoJSON, setIsGeoJSON]             = useState(false)
+  const [geoJsonPreview, setGeoJsonPreview]   = useState<AdapterPreview | null>(null)
+  const [geoJsonColorProp, setGeoJsonColorProp] = useState<string | null>(null)
+  const [geoJsonParsing, setGeoJsonParsing]   = useState(false)
+  const [geoJsonError, setGeoJsonError]       = useState<string | null>(null)
+
+  // GeoTIFF adapter state
+  const [isGeoTIFF, setIsGeoTIFF]             = useState(false)
+
   if (!open && step !== 'list') setStep('list')
 
   const toggleLayer = (id: string) => {
@@ -174,7 +185,32 @@ export function LayersPanel({
     const name = file?.name.toLowerCase() ?? ''
     setIsCSV(name.endsWith('.csv'))
     setIsGPKG(name.endsWith('.gpkg'))
+    setIsGeoTIFF(name.endsWith('.tif') || name.endsWith('.tiff'))
     setGpkgError(null)
+
+    // Detect GeoJSON and kick off preview parsing immediately
+    const isGeoJSONFile = name.endsWith('.geojson') || name.endsWith('.json')
+    setIsGeoJSON(isGeoJSONFile)
+    setGeoJsonPreview(null)
+    setGeoJsonColorProp(null)
+    setGeoJsonError(null)
+
+    if (isGeoJSONFile && file) {
+      setGeoJsonParsing(true)
+      geojsonAdapter.preview(file)
+        .then(prev => {
+          setGeoJsonPreview(prev)
+          setGeoJsonColorProp(prev.suggestedProp)
+          // Auto-fill layer name from filename if the user hasn't typed one yet
+          const baseName = file.name
+            .replace(/\.(geojson|json)$/i, '')
+            .replace(/[_-]+/g, ' ')
+            .trim()
+          setAddName(prev => prev.trim() ? prev : baseName)
+        })
+        .catch(err => setGeoJsonError(String(err)))
+        .finally(() => setGeoJsonParsing(false))
+    }
   }
 
   const handleAddLayer = async () => {
@@ -182,6 +218,40 @@ export function LayersPanel({
 
     // Generar el ID de la capa aquí para poder asociar sensores y capa
     const layerId = `custom_${Date.now()}`
+
+    // Si hay GeoJSON, construir la capa con el adaptador
+    if (addFile && isGeoJSON && geoJsonPreview) {
+      const layer = geojsonAdapter.build(geoJsonPreview, {
+        label:     addName.trim(),
+        colorProp: geoJsonColorProp,
+      })
+      onGpkgImport([layer])
+      setActiveTab('externas')
+      resetForm()
+      setStep('list')
+      return
+    }
+
+    // Si hay GeoTIFF, procesar con geotiff.js (overlay de imagen coloreada)
+    if (addFile && isGeoTIFF) {
+      setImporting(true)
+      setGpkgError(null)
+      try {
+        const { geotiffAdapter } = await import('@/lib/layerAdapters')
+        const preview = await geotiffAdapter.preview(addFile)
+        const layer   = geotiffAdapter.build(preview, { label: addName.trim(), colorProp: null })
+        onGpkgImport([layer])
+        setActiveTab('externas')
+        resetForm()
+        setStep('list')
+      } catch (err) {
+        console.error('[GeoTIFF import error]', err)
+        setGpkgError(String(err))
+      } finally {
+        setImporting(false)
+      }
+      return
+    }
 
     // Si hay GPKG, importar con sql.js
     if (addFile && isGPKG) {
@@ -260,9 +330,11 @@ export function LayersPanel({
 
   const resetForm = () => {
     setAddName(''); setAddViz('puntos')
-    setAddFile(null); setIsCSV(false); setIsGPKG(false); setProgress(0)
+    setAddFile(null); setIsCSV(false); setIsGPKG(false); setIsGeoTIFF(false); setProgress(0)
     setAddKind('banco'); setAddCustomKind(''); setAddIconShape(DEFAULT_ICON_SHAPE)
     setGpkgError(null)
+    setIsGeoJSON(false); setGeoJsonPreview(null); setGeoJsonColorProp(null)
+    setGeoJsonParsing(false); setGeoJsonError(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -448,12 +520,16 @@ export function LayersPanel({
                   />
                   <span className="text-[13px] font-medium text-neutral-900 truncate">{layer.label}</span>
                   <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">
-                    gpkg
+                    {layer.tableName === 'geotiff'
+                      ? 'geotiff'
+                      : layer.tableName === 'geojson'
+                        ? 'geojson'
+                        : 'gpkg'}
                   </span>
                 </div>
                 <span className="text-[10px] text-neutral-400">
                 {layer.geometryType === 'raster'
-                  ? 'raster · tiles'
+                  ? (layer.imageUrl ? 'raster · imagen' : 'raster · tiles')
                   : `${layer.geometryType} · ${(layer.geojson as any).features?.length ?? 0} features`}
               </span>
               </div>
@@ -561,22 +637,71 @@ export function LayersPanel({
                     GeoPackage detectado — se importarán capas vectoriales
                   </span>
                 )}
+                {isGeoJSON && (
+                  <span className="text-[10px] text-violet-600 mt-0.5 block">
+                    {geoJsonParsing
+                      ? 'Analizando GeoJSON…'
+                      : geoJsonPreview
+                        ? `GeoJSON · ${geoJsonPreview.featureCount.toLocaleString()} features · ${geoJsonPreview.geometryType}`
+                        : geoJsonError
+                          ? 'Error al leer el archivo'
+                          : 'GeoJSON detectado'}
+                  </span>
+                )}
+                {isGeoTIFF && (
+                  <span className="text-[10px] text-amber-600 mt-0.5 block">
+                    GeoTIFF detectado — se coloreará el ráster con la rampa Viridis
+                  </span>
+                )}
               </div>
             ) : (
               <>
                 <span className="text-xs text-neutral-500">Arrastra o selecciona un archivo</span>
-                <span className="text-[10px] text-neutral-300">.geojson · .json · .csv · .gpkg</span>
+                <span className="text-[10px] text-neutral-300">.geojson · .json · .csv · .gpkg · .tif</span>
               </>
             )}
             <input
               ref={fileInputRef}
               type="file"
-              accept=".geojson,.json,.csv,.gpkg"
+              accept=".geojson,.json,.csv,.gpkg,.tif,.tiff"
               className="hidden"
               onChange={handleFileChange}
             />
           </label>
         </div>
+
+        {/* Colorear por (sólo para GeoJSON, una vez parseado) */}
+        {isGeoJSON && !geoJsonParsing && geoJsonPreview && (
+          <div>
+            <label className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider block mb-2">
+              Colorear por
+            </label>
+            <p className="text-[10px] text-neutral-400 mb-2 -mt-1">
+              Propiedad para colorear cada feature en el mapa
+            </p>
+            <select
+              value={geoJsonColorProp ?? ''}
+              onChange={e => setGeoJsonColorProp(e.target.value || null)}
+              className="w-full text-sm text-neutral-900 border border-black/15 rounded-md px-3 py-2 outline-none focus:border-neutral-400 bg-white appearance-none cursor-pointer"
+            >
+              <option value="">— Sin colorear (color uniforme) —</option>
+              {Object.keys(geoJsonPreview.availableProps).map(prop => (
+                <option key={prop} value={prop}>{prop}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Error de parseo GeoJSON */}
+        {isGeoJSON && geoJsonError && !geoJsonParsing && (
+          <div className="flex items-start gap-2 bg-red-50 rounded-lg px-3 py-2.5 text-[11px] text-red-700">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="flex-shrink-0 mt-0.5">
+              <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.4"/>
+              <path d="M8 5v3M8 10.5h.01" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+            </svg>
+            {geoJsonError}
+          </div>
+        )}
 
         {/* Tipo de dispositivo (sólo relevante en CSV, no en GPKG) */}
         {isCSV && !isGPKG && (
@@ -647,25 +772,27 @@ export function LayersPanel({
           </div>
         )}
 
-        {/* Tipo de visualización */}
-        <div>
-          <label className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider block mb-2">
-            Tipo de visualización
-          </label>
-          <div className="flex gap-2">
-            {VIZ_TYPES.map(v => (
-              <button
-                key={v}
-                onClick={() => setAddViz(v)}
-                className={`flex-1 py-2 rounded-md text-xs font-medium border cursor-pointer transition-colors capitalize ${
-                  addViz === v ? 'bg-neutral-900 text-white border-neutral-900' : 'bg-white text-neutral-600 border-black/15 hover:bg-neutral-50'
-                }`}
-              >
-                {v}
-              </button>
-            ))}
+        {/* Tipo de visualización (no aplica a GPKG ni GeoJSON, la geometría es intrínseca) */}
+        {!isGPKG && !isGeoJSON && (
+          <div>
+            <label className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider block mb-2">
+              Tipo de visualización
+            </label>
+            <div className="flex gap-2">
+              {VIZ_TYPES.map(v => (
+                <button
+                  key={v}
+                  onClick={() => setAddViz(v)}
+                  className={`flex-1 py-2 rounded-md text-xs font-medium border cursor-pointer transition-colors capitalize ${
+                    addViz === v ? 'bg-neutral-900 text-white border-neutral-900' : 'bg-white text-neutral-600 border-black/15 hover:bg-neutral-50'
+                  }`}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Error GPKG */}
         {gpkgError && (
@@ -698,19 +825,22 @@ export function LayersPanel({
       <div className="px-4 py-3 border-t border-black/[0.08] flex-shrink-0">
         <button
           onClick={handleAddLayer}
-          disabled={!addName.trim() || importing}
+          disabled={!addName.trim() || importing || geoJsonParsing || (isGeoJSON && !!geoJsonError)}
           className="w-full h-9 rounded-md text-sm font-medium cursor-pointer bg-neutral-900 text-white border-none hover:opacity-85 disabled:opacity-30 disabled:cursor-not-allowed transition-opacity flex items-center justify-center gap-2"
         >
-          {importing ? (
+          {importing || geoJsonParsing ? (
             <>
               <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none">
                 <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeOpacity="0.25"/>
                 <path d="M12 2a10 10 0 0110 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
               </svg>
-              Importando…
+              {geoJsonParsing ? 'Analizando…' : 'Importando…'}
             </>
           ) : (
-            isCSV ? 'Importar CSV al mapa →' : isGPKG ? 'Importar GeoPackage →' : 'Añadir capa →'
+            isCSV ? 'Importar CSV al mapa →'
+            : isGPKG ? 'Importar GeoPackage →'
+            : isGeoJSON ? 'Importar GeoJSON →'
+            : 'Añadir capa →'
           )}
         </button>
       </div>

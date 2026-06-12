@@ -168,6 +168,30 @@ export default function Home() {
     setGpkgLayers(prev => [...prev, ...layers])
   }, [])
 
+  // Capa de ejemplo precargada: GeoTIFF de temperatura superficial (LST) de
+  // Barcelona, procesado en cliente con geotiff.js y coloreado con Viridis.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch('/Barcelona_LST.tif')
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const blob = await res.blob()
+        const file = new File([blob], 'Barcelona_LST.tif', { type: 'image/tiff' })
+        const { geotiffAdapter } = await import('@/lib/layerAdapters')
+        const preview = await geotiffAdapter.preview(file)
+        const layer   = geotiffAdapter.build(preview, {
+          label:     'Temperatura superficial (LST) · Barcelona',
+          colorProp: null,
+        })
+        if (!cancelled) setGpkgLayers(prev => [...prev, layer])
+      } catch (err) {
+        console.error('[LST example] No se pudo cargar la capa de ejemplo:', err)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
   const handleGpkgLayerToggle = useCallback((id: string) => {
     setGpkgLayers(prev => prev.map(l => l.id === id ? { ...l, active: !l.active } : l))
   }, [])

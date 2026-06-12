@@ -90,6 +90,12 @@ export interface GpkgFeatureLayer {
   // Solo para geometryType === 'raster'
   tileBounds?:    [number, number, number, number]  // WGS84 [minLng, minLat, maxLng, maxLat]
   tileZoomRange?: [number, number]                  // [minZoom, maxZoom]
+  // Overlay de imagen (raster coloreado en cliente, p.ej. GeoTIFF vía geotiff.js).
+  // Cuando está presente, MapView usa un source `image` en vez de tiles.
+  imageUrl?:      string
+  // Lectura de valor en hover (rásters con valores en rasterValueRegistry).
+  valueLabel?:    string   // p.ej. "Temperatura superficial"
+  valueUnit?:     string   // p.ej. "°C"
 }
 
 export interface MapLayer {

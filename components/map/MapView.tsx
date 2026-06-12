@@ -1,11 +1,12 @@
 'use client'
 
-import { useEffect, useRef, useCallback, useMemo } from 'react'
+import { useEffect, useRef, useCallback, useMemo, useState } from 'react'
 import { MAPBOX_TOKEN, SENSORS, MAP_CENTER, MAP_ZOOM, AFLUENCIA_DATA, TEMPERATURA_DATA } from '@/lib/data'
 import { Project, MapMode, Sensor } from '@/types'
 import { ICON_SHAPE_MAP } from '@/lib/sensorIconShapes'
 import type { GpkgFeatureLayer } from '@/types'
 import { tileUrlRegistry, EMPTY_TILE } from '@/lib/gpkgImport/tileServer'
+import { sampleRasterAt, getRasterValues } from '@/lib/layerAdapters/rasterValueRegistry'
 
 // ── Helpers de iconos (sin dependencia del mapa, reutilizables) ───────────────
 
@@ -73,6 +74,12 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
   const mapRef = useRef<any>(null)
   const mapboxglRef = useRef<any>(null)
   const mapLoadedRef = useRef(false)
+  // Estado (no solo ref) para que los efectos que dependen del mapa cargado
+  // se re-ejecuten cuando esté listo (p.ej. capas precargadas que llegan antes
+  // de que el chunk async de mapbox-gl haya inicializado el mapa).
+  const [mapReady, setMapReady] = useState(false)
+  // Lectura de valor del ráster bajo el cursor (hover)
+  const [hoverReadout, setHoverReadout] = useState<{ layerId: string; text: string } | null>(null)
   const zoneMarkersRef = useRef<Record<string, any>>({})
   const drawCoordsRef = useRef<number[][]>([])
   const drawMarkersRef = useRef<any[]>([])
@@ -252,6 +259,7 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
         // así que es aquí donde el resize inicial es seguro.
         map.resize()
         mapLoadedRef.current = true
+        setMapReady(true)
         const makeSquare = (color: string) => {
           const c = document.createElement('canvas')
           c.width = 12; c.height = 12
@@ -390,6 +398,7 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
         mapRef.current.remove()
         mapRef.current = null
         mapLoadedRef.current = false
+        setMapReady(false)
       }
     }
   }, [updateDrawLine, onZoneComplete, renderProjectZone])
@@ -746,6 +755,35 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
         const opacity    = layer.opacity / 100
         const visibility = layer.active ? 'visible' : 'none'
 
+        // ── Capa raster: overlay de imagen (GeoTIFF coloreado) ──────────────
+        if (layer.geometryType === 'raster' && layer.imageUrl) {
+          const srcId = `gpkg-image-src-${layer.id}`
+          const lyrId = `gpkg-image-lyr-${layer.id}`
+          const [minLng, minLat, maxLng, maxLat] = layer.tileBounds ?? [0, 0, 0, 0]
+          // Mapbox image source: 4 esquinas en orden TL, TR, BR, BL
+          const coordinates: [number, number][] = [
+            [minLng, maxLat], [maxLng, maxLat], [maxLng, minLat], [minLng, minLat],
+          ]
+
+          if (!map.getSource(srcId)) {
+            map.addSource(srcId, { type: 'image', url: layer.imageUrl, coordinates } as any)
+          }
+
+          if (!map.getLayer(lyrId)) {
+            map.addLayer({
+              id:     lyrId,
+              type:   'raster',
+              source: srcId,
+              paint:  { 'raster-opacity': opacity, 'raster-resampling': 'nearest' },
+              layout: { visibility },
+            })
+          } else {
+            map.setPaintProperty(lyrId, 'raster-opacity', opacity)
+            map.setLayoutProperty(lyrId, 'visibility', visibility)
+          }
+          continue
+        }
+
         // ── Capa raster (tiles GPKG) ────────────────────────────────────────
         if (layer.geometryType === 'raster') {
           const srcId = `gpkg-raster-src-${layer.id}`
@@ -873,7 +911,56 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
       map.once('load', applyGpkgLayers)
       return () => map.off('load', applyGpkgLayers)
     }
-  }, [gpkgLayers])
+  }, [gpkgLayers, mapReady])
+
+  // ── Lectura de valor del ráster bajo el cursor (hover en vivo) ───────────────
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+
+    // Capas raster activas con valores registrados, de arriba a abajo (la de
+    // encima — última en el array — gana).
+    const sampleable = (gpkgLayers ?? [])
+      .filter(l => l.geometryType === 'raster' && l.active && getRasterValues(l.id))
+      .reverse()
+
+    if (sampleable.length === 0) {
+      setHoverReadout(null)
+      return
+    }
+
+    let rafPending = false
+    let last: { lng: number; lat: number } | null = null
+
+    const compute = () => {
+      rafPending = false
+      if (!last) return
+      for (const layer of sampleable) {
+        const v = sampleRasterAt(layer.id, last.lng, last.lat)
+        if (v === undefined) continue            // fuera de esta capa, probar siguiente
+        const unit = layer.valueUnit ? ` ${layer.valueUnit}` : ''
+        const text = v === null ? 'Sin dato en este punto' : `${v.toFixed(1)}${unit}`
+        setHoverReadout({ layerId: layer.id, text })
+        return
+      }
+      setHoverReadout(null)                        // fuera de todos los rásters
+    }
+
+    const onMove = (e: any) => {
+      last = e.lngLat
+      if (rafPending) return
+      rafPending = true
+      requestAnimationFrame(compute)
+    }
+    const onLeave = () => setHoverReadout(null)
+
+    map.on('mousemove', onMove)
+    map.on('mouseout', onLeave)
+    return () => {
+      map.off('mousemove', onMove)
+      map.off('mouseout', onLeave)
+    }
+  }, [gpkgLayers, mapReady])
 
   // ── Registrar iconos de tipos personalizados al importar ─────────────────────
   useEffect(() => {
@@ -953,6 +1040,21 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                         <span style={{ fontSize: 9, color: '#555' }}>{fmt(min)}</span>
                         <span style={{ fontSize: 9, color: '#555' }}>{fmt(max)}</span>
+                      </div>
+                      {/* Lectura en vivo del valor bajo el cursor */}
+                      <div style={{
+                        marginTop: 5,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        color: '#222',
+                        minHeight: 14,
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {hoverReadout?.layerId === layer.id
+                          ? (hoverReadout.text === 'Sin dato en este punto'
+                              ? <span style={{ fontWeight: 500, color: '#888' }}>Sin dato en este punto</span>
+                              : `↳ ${hoverReadout.text}`)
+                          : <span style={{ fontWeight: 500, color: '#aaa' }}>Pasa el cursor por el mapa</span>}
                       </div>
                     </div>
                   )
