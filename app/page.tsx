@@ -18,6 +18,8 @@ import { SensorFiltersPanel, EMPTY_SENSOR_FILTERS, countActiveSensorFilters, app
 import { DevicePanel } from '@/components/panels/DevicePanel'
 import { EMPTY_DEVICE_FILTERS, generateProjectDevices, applyDeviceFilters, ProjectDevice } from '@/lib/projectDevices'
 import { ImportResult } from '@/lib/csvImport'
+import { aggregateRasterInPolygon } from '@/lib/layerAdapters/rasterValueRegistry'
+import type { ZoneRasterStat } from '@/components/panels/ZonePanel'
 
 export default function Home() {
   const [view, setView]           = useState<AppView>('home')
@@ -27,6 +29,8 @@ export default function Home() {
   const [projects, setProjects]   = useState<Project[]>(DEFAULT_PROJECTS)
   const [drawMode, setDrawMode]             = useState(false)
   const [pendingCoords, setPendingCoords]   = useState<number[][]>([])
+  // Medias de las capas ráster (TIF) dentro del área dibujada
+  const [zoneRasterStats, setZoneRasterStats] = useState<ZoneRasterStat[]>([])
   const [sensorsVisible, setSensorsVisible] = useState(true)
   const [heatmapVisible, setHeatmapVisible] = useState(false)
   const [temperaturaVisible, setTemperaturaVisible] = useState(false)
@@ -254,8 +258,21 @@ export default function Home() {
   const handleZoneComplete = useCallback((coords: number[][]) => {
     setDrawMode(false)
     setPendingCoords(coords)
+    // Media de cada capa ráster (TIF) dentro del polígono dibujado
+    const stats: ZoneRasterStat[] = gpkgLayers
+      .filter(l => l.geometryType === 'raster')
+      .map(l => {
+        const agg = aggregateRasterInPolygon(l.id, coords)
+        return {
+          label:      l.valueLabel ?? l.label,
+          valueUnit:  l.valueUnit ?? '',
+          mean:       agg?.mean  ?? null,
+          count:      agg?.count ?? 0,
+        }
+      })
+    setZoneRasterStats(stats)
     setPanel('zone')
-  }, [])
+  }, [gpkgLayers])
 
   const handleCreateProject = (name: string) => {
     const newProject: Project = {
@@ -450,6 +467,7 @@ export default function Home() {
               open={panel === 'zone'}
               onClose={handleCloseZone}
               onCreateProject={handleCreateProject}
+              rasterStats={zoneRasterStats}
             />
             <ProjectsPanel
               open={panel === 'projects'}

@@ -4,13 +4,29 @@ import { useState, useEffect } from 'react'
 import { SidePanel, CloseIcon, KpiBadge } from '@/components/ui'
 import { randomZoneKpis, randomZoneDevices } from '@/lib/utils'
 
+export interface ZoneRasterStat {
+  label:     string        // p.ej. "Temperatura superficial", "NDVI"
+  valueUnit: string        // "°C" o "" para índices adimensionales
+  mean:      number | null // null si no hay datos válidos en el área
+  count:     number        // nº de píxeles agregados
+}
+
 interface ZonePanelProps {
   open: boolean
   onClose: () => void
   onCreateProject: (name: string) => void
+  rasterStats?: ZoneRasterStat[]
 }
 
-export function ZonePanel({ open, onClose, onCreateProject }: ZonePanelProps) {
+/** Formatea la media: 1 decimal con unidad (°C), 2 decimales para índices. */
+function formatMean(s: ZoneRasterStat): string {
+  if (s.mean === null) return 'Sin datos en el área'
+  const decimals = s.valueUnit ? 1 : 2
+  const unit = s.valueUnit ? ` ${s.valueUnit}` : ''
+  return `${s.mean.toFixed(decimals)}${unit}`
+}
+
+export function ZonePanel({ open, onClose, onCreateProject, rasterStats = [] }: ZonePanelProps) {
   const [name, setName] = useState('Área sin nombre')
   const [kpis, setKpis] = useState<ReturnType<typeof randomZoneKpis>>([])
   const [devices, setDevices] = useState<ReturnType<typeof randomZoneDevices>>([])
@@ -56,6 +72,23 @@ export function ZonePanel({ open, onClose, onCreateProject }: ZonePanelProps) {
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto">
+        {/* Índices ambientales (media de las capas TIF en el área) */}
+        {rasterStats.length > 0 && (
+          <div className="px-4 py-3 border-b border-black/[0.08]">
+            <p className="text-[10px] font-medium text-neutral-400 uppercase tracking-widest mb-2.5">Índices ambientales · media del área</p>
+            <div className="flex flex-col gap-1.5">
+              {rasterStats.map(s => (
+                <div key={s.label} className="flex items-baseline justify-between gap-2 bg-neutral-50 border border-black/[0.07] rounded-md px-3 py-2">
+                  <span className="text-[11px] text-black/55">{s.label}</span>
+                  <span className={`text-sm font-semibold tabular-nums ${s.mean === null ? 'text-neutral-300 font-normal text-[11px]' : 'text-black/90'}`}>
+                    {formatMean(s)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* KPIs */}
         <div className="px-4 py-3 border-b border-black/[0.08]">
           <p className="text-[10px] font-medium text-neutral-400 uppercase tracking-widest mb-2.5">KPIs del área</p>
