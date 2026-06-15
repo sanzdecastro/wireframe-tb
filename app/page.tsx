@@ -177,10 +177,10 @@ export default function Home() {
   // con Viridis. NDVI/NDBI/UTFVI son índices adimensionales (sin unidad).
   useEffect(() => {
     const RASTER_LAYERS = [
-      { file: 'Barcelona_LST.tif',   label: 'Temperatura superficial (LST) · Barcelona', valueLabel: 'Temperatura superficial', valueUnit: '°C' },
-      { file: 'Barcelona_NDVI.tif',  label: 'Vegetación (NDVI) · Barcelona',             valueLabel: 'NDVI',                     valueUnit: '' },
-      { file: 'Barcelona_NDBI.tif',  label: 'Superficie construida (NDBI) · Barcelona',  valueLabel: 'NDBI',                     valueUnit: '' },
-      { file: 'Barcelona_UTFVI.tif', label: 'Estrés térmico urbano (UTFVI) · Barcelona', valueLabel: 'UTFVI',                    valueUnit: '' },
+      { file: 'Barcelona_LST.tif',   label: 'Temperatura superficial (LST) · Barcelona', valueLabel: 'Temperatura superficial', valueUnit: '°C', ramp: 'inferno' as const },
+      { file: 'Barcelona_NDVI.tif',  label: 'Vegetación (NDVI) · Barcelona',             valueLabel: 'NDVI',                     valueUnit: '',   ramp: 'ndvi' as const },
+      { file: 'Barcelona_NDBI.tif',  label: 'Superficie construida (NDBI) · Barcelona',  valueLabel: 'NDBI',                     valueUnit: '',   ramp: 'magma' as const },
+      { file: 'Barcelona_UTFVI.tif', label: 'Estrés térmico urbano (UTFVI) · Barcelona', valueLabel: 'UTFVI',                    valueUnit: '',   ramp: 'reds' as const },
     ]
     let cancelled = false
     ;(async () => {
@@ -191,7 +191,7 @@ export default function Home() {
           if (!res.ok) throw new Error(`HTTP ${res.status}`)
           const blob = await res.blob()
           const file = new File([blob], cfg.file, { type: 'image/tiff' })
-          const preview = await geotiffAdapter.preview(file)
+          const preview = await geotiffAdapter.preview(file, { colorRamp: cfg.ramp })
           const layer   = geotiffAdapter.build(preview, {
             label:      cfg.label,
             colorProp:  null,

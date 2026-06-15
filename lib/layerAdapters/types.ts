@@ -5,8 +5,14 @@
  */
 
 import type { GpkgFeatureLayer, GpkgColorScheme } from '@/types'
+import type { RampName } from './colorRamps'
 
 export type AdapterSourceType = 'geojson' | 'csv' | 'gpkg' | 'geotiff'
+
+export interface PreviewOptions {
+  /** Rampa de color para rásters (geotiff). Default: 'viridis'. */
+  colorRamp?: RampName
+}
 
 export interface AdapterPreview {
   /** Tipo de formato detectado */
@@ -55,7 +61,7 @@ export interface LayerAdapter {
   /** Detecta si el adaptador puede manejar este archivo */
   canHandle(file: File): boolean
   /** Parsea el archivo y devuelve un preview (rápido, sin construir el layer) */
-  preview(file: File): Promise<AdapterPreview>
+  preview(file: File, opts?: PreviewOptions): Promise<AdapterPreview>
   /** Construye el GpkgFeatureLayer final a partir del preview */
   build(preview: AdapterPreview, options: AdapterBuildOptions): GpkgFeatureLayer
 }

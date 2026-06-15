@@ -12,11 +12,11 @@
 
 import type { GpkgFeatureLayer } from '@/types'
 import { buildTransform } from '@/lib/gpkgImport/reproject'
-import { viridisRGB, viridisStops } from './viridis'
+import { rampRGB, rampStops, type RampName } from './colorRamps'
 import { registerRasterValues } from './rasterValueRegistry'
-import type { LayerAdapter, AdapterPreview, AdapterBuildOptions, RasterPreview } from './types'
+import type { LayerAdapter, AdapterPreview, AdapterBuildOptions, RasterPreview, PreviewOptions } from './types'
 
-async function buildRasterPreview(buffer: ArrayBuffer): Promise<RasterPreview> {
+async function buildRasterPreview(buffer: ArrayBuffer, ramp: RampName): Promise<RasterPreview> {
   // Import dinámico: geotiff solo se carga en cliente y bajo demanda.
   const { fromArrayBuffer } = await import('geotiff')
 
@@ -65,7 +65,7 @@ async function buildRasterPreview(buffer: ArrayBuffer): Promise<RasterPreview> {
     const v = band[i]
     const o = i * 4
     if (!isValid(v)) { px[o + 3] = 0; continue }   // nodata → transparente
-    const [r, g, b] = viridisRGB((v - min) / range)
+    const [r, g, b] = rampRGB(ramp, (v - min) / range)
     px[o]     = r
     px[o + 1] = g
     px[o + 2] = b
@@ -102,7 +102,7 @@ async function buildRasterPreview(buffer: ArrayBuffer): Promise<RasterPreview> {
     colorScheme: {
       property: 'valor',
       type:     'gradient',
-      stops:    viridisStops(min, max),
+      stops:    rampStops(ramp, min, max),
     },
     data: band,
     width,
@@ -119,9 +119,9 @@ export const geotiffAdapter: LayerAdapter = {
     return name.endsWith('.tif') || name.endsWith('.tiff')
   },
 
-  async preview(file: File): Promise<AdapterPreview> {
+  async preview(file: File, opts?: PreviewOptions): Promise<AdapterPreview> {
     const buffer = await file.arrayBuffer()
-    const raster = await buildRasterPreview(buffer)
+    const raster = await buildRasterPreview(buffer, opts?.colorRamp ?? 'viridis')
     return {
       sourceType:    'geotiff',
       featureCount:  0,
