@@ -64,6 +64,13 @@ export default function Home() {
   const [customKindIcons, setCustomKindIcons] = useState<Record<string, string>>({})
   // Capas GPKG importadas
   const [gpkgLayers, setGpkgLayers] = useState<GpkgFeatureLayer[]>([])
+  // Espejo en ref para leer las capas desde callbacks ESTABLES sin meterlas en
+  // sus deps. Crítico para handleZoneComplete: si dependiera de `gpkgLayers`,
+  // su identidad cambiaría en cada frame de la serie temporal LST y eso re-
+  // ejecutaría el efecto de init de MapView (map.remove() + recrear el mapa
+  // entero en cada cambio de frame), rompiendo el cross-dissolve.
+  const gpkgLayersRef = useRef<GpkgFeatureLayer[]>([])
+  gpkgLayersRef.current = gpkgLayers
   // Opacidades por capa: layerId → 0-100
   const [layerOpacities, setLayerOpacities] = useState<Record<string, number>>({})
   // Isócrona
@@ -283,6 +290,12 @@ export default function Home() {
           frames:            manifest.frames,
           currentFrameIndex: 0,
         }])
+        // Prefetch del resto de frames en segundo plano (secuencial) → durante
+        // la reproducción el swap es instantáneo y el cross-fade no se traba.
+        for (let i = 1; i < manifest.frames.length; i++) {
+          if (cancelled) return
+          try { await decodeLstFrame(manifest.frames[i].file) } catch { /* se reintenta al hacer scrub */ }
+        }
       } catch (err) {
         console.error('[LST timeseries] No se pudo cargar:', err)
       }
@@ -401,8 +414,9 @@ export default function Home() {
   const handleZoneComplete = useCallback((coords: number[][]) => {
     setDrawMode(false)
     setPendingCoords(coords)
-    // Media de cada capa ráster (TIF) dentro del polígono dibujado
-    const stats: ZoneRasterStat[] = gpkgLayers
+    // Media de cada capa ráster (TIF) dentro del polígono dibujado.
+    // Lee del ref para mantener identidad estable (ver gpkgLayersRef).
+    const stats: ZoneRasterStat[] = gpkgLayersRef.current
       .filter(l => l.geometryType === 'raster')
       .map(l => {
         const agg = aggregateRasterInPolygon(l.id, coords)
@@ -415,7 +429,7 @@ export default function Home() {
       })
     setZoneRasterStats(stats)
     setPanel('zone')
-  }, [gpkgLayers])
+  }, [])
 
   const handleCreateProject = (name: string) => {
     const newProject: Project = {

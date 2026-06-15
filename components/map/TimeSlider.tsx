@@ -9,7 +9,7 @@ interface TimeSliderProps {
   onIndexChange: (index: number) => void
 }
 
-const PLAY_INTERVAL_MS = 1100
+const PLAY_INTERVAL_MS = 1600
 
 function formatDate(date: string | null): string {
   if (!date) return 'Sin fecha'

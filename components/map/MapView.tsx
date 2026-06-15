@@ -83,6 +83,12 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
   const zoneMarkersRef = useRef<Record<string, any>>({})
   // imageUrl actual de cada source `image` (para detectar cambio de frame raster)
   const imageUrlRef = useRef<Record<string, string>>({})
+  // Estado de cross-dissolve de capas raster temporales: qué slot (a/b) muestra
+  // el frame actual, su imageUrl, el handle de la animación rAF en curso y un
+  // contador de generación para invalidar callbacks asíncronos al interrumpir.
+  const crossfadeRef = useRef<Record<string, {
+    current: 'a' | 'b'; url: string; raf: number | null; gen: number
+  }>>({})
   const drawCoordsRef = useRef<number[][]>([])
   const drawMarkersRef = useRef<any[]>([])
   const drawModeRef = useRef(drawMode)
@@ -756,6 +762,142 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
       for (const layer of gpkgLayers) {
         const opacity    = layer.opacity / 100
         const visibility = layer.active ? 'visible' : 'none'
+
+        // ── Serie temporal raster: cross-dissolve de cobertura constante ────
+        // Dos capas raster apiladas (a = abajo, b = arriba). Al cambiar de frame
+        // la nueva imagen se funde sobre la anterior conduciendo las opacidades
+        // por curvas que mantienen la opacidad TOTAL del conjunto fija en
+        // `target` durante todo el fundido: ni se cuela el basemap ni se
+        // sobre-satura, sea cual sea la opacidad de la capa (p.ej. 85%).
+        if (layer.geometryType === 'raster' && layer.imageUrl && layer.frames && layer.frames.length > 0) {
+          const [minLng, minLat, maxLng, maxLat] = layer.tileBounds ?? [0, 0, 0, 0]
+          const coordinates: [number, number][] = [
+            [minLng, maxLat], [maxLng, maxLat], [maxLng, minLat], [minLng, minLat],
+          ]
+          const FADE_MS = 600
+          const target  = layer.active ? opacity : 0
+
+          const lyrIdOf = (slot: 'a' | 'b') => `gpkg-image-lyr-${layer.id}-${slot}`
+          const srcIdOf = (slot: 'a' | 'b') => `gpkg-image-src-${layer.id}-${slot}`
+
+          const ensureSlot = (slot: 'a' | 'b') => {
+            const srcId = srcIdOf(slot)
+            const lyrId = lyrIdOf(slot)
+            if (!map.getSource(srcId)) {
+              map.addSource(srcId, { type: 'image', url: layer.imageUrl!, coordinates } as any)
+            }
+            if (!map.getLayer(lyrId)) {
+              map.addLayer({
+                id: lyrId, type: 'raster', source: srcId,
+                paint: {
+                  'raster-opacity': 0,
+                  'raster-opacity-transition': { duration: 0 },   // sin easing de Mapbox: lo conducimos por rAF
+                  'raster-fade-duration': 0,                      // sin fundido interno de textura
+                  'raster-resampling': 'nearest',
+                },
+                layout: { visibility: 'visible' },
+              })
+            }
+            return { srcId, lyrId }
+          }
+
+          const setOp = (lyrId: string, v: number) => {
+            if (map.getLayer(lyrId)) map.setPaintProperty(lyrId, 'raster-opacity', v)
+          }
+
+          // Garantiza que AMBOS slots existan SIEMPRE, creados juntos y en la
+          // misma banda (a = abajo, b = arriba, por orden de inserción). Si uno
+          // hubo que crearlo —primer pintado o tras un reload de estilo que
+          // borra las capas— se reinicia limpio: frame actual en A a plena
+          // opacidad, B oculto. Nunca se recrea un solo slot (eso rompería el
+          // apilado: una capa nueva se añadiría encima de los sensores).
+          const hadA = !!map.getLayer(lyrIdOf('a'))
+          const hadB = !!map.getLayer(lyrIdOf('b'))
+          const a = ensureSlot('a')
+          const b = ensureSlot('b')
+          const state = crossfadeRef.current[layer.id]
+
+          if (!hadA || !hadB || !state) {
+            if (state?.raf != null) cancelAnimationFrame(state.raf)
+            setOp(a.lyrId, target)
+            setOp(b.lyrId, 0)
+            crossfadeRef.current[layer.id] = {
+              current: 'a', url: layer.imageUrl, raf: null, gen: (state?.gen ?? 0) + 1,
+            }
+          } else if (state.url !== layer.imageUrl) {
+            // Interrupción: cierra de golpe el fundido en curso (frame anterior a
+            // plena opacidad) para arrancar el nuevo desde un estado limpio.
+            if (state.raf != null) {
+              cancelAnimationFrame(state.raf)
+              setOp(lyrIdOf(state.current), target)
+              setOp(lyrIdOf(state.current === 'a' ? 'b' : 'a'), 0)
+              state.raf = null
+            }
+
+            const incoming = state.current === 'a' ? 'b' : 'a'   // recibe el frame nuevo
+            const outgoing = state.current                        // muestra el frame actual
+            const inSlot   = incoming === 'a' ? a : b
+            const gen      = state.gen + 1
+            crossfadeRef.current[layer.id] = { current: incoming, url: layer.imageUrl, raf: null, gen }
+            ;(map.getSource(inSlot.srcId) as any).updateImage({ url: layer.imageUrl, coordinates })
+
+            const run = () => {
+              const start = performance.now()
+              const step = (now: number) => {
+                const entry = crossfadeRef.current[layer.id]
+                if (!entry || entry.gen !== gen) return            // interrumpido por otro frame
+                const raw = FADE_MS > 0 ? Math.min(1, (now - start) / FADE_MS) : 1
+                const t   = raw * raw * (3 - 2 * raw)              // smoothstep
+                // Cobertura constante: contribución nueva = target·t, vieja = target·(1−t).
+                // Resolviendo el apilado alfa según quién esté arriba (b) o abajo (a):
+                let opIn: number, opOut: number
+                if (incoming === 'b') {           // nueva arriba, vieja abajo
+                  opIn  = target * t
+                  opOut = target > 0 ? (target * (1 - t)) / (1 - target * t) : 0
+                } else {                           // nueva abajo, vieja arriba
+                  opOut = target * (1 - t)
+                  opIn  = target > 0 ? (target * t) / (1 - target * (1 - t)) : 0
+                }
+                setOp(inSlot.lyrId, opIn)
+                setOp(lyrIdOf(outgoing), opOut)
+                if (raw < 1) {
+                  entry.raf = requestAnimationFrame(step)
+                } else {
+                  setOp(inSlot.lyrId, target)
+                  setOp(lyrIdOf(outgoing), 0)
+                  entry.raf = null
+                }
+              }
+              crossfadeRef.current[layer.id].raf = requestAnimationFrame(step)
+            }
+
+            if (target <= 0) {
+              // Capa oculta: sin fundido, solo dejar lista la imagen nueva.
+              setOp(inSlot.lyrId, 0)
+              setOp(lyrIdOf(outgoing), 0)
+            } else if (map.isSourceLoaded(inSlot.srcId)) {
+              run()
+            } else {
+              // Espera a que la textura nueva esté subida; mientras, la vieja
+              // sigue a plena opacidad (sin hueco). Luego arranca el fundido.
+              const onData = (e: any) => {
+                if (e.sourceId === inSlot.srcId && map.isSourceLoaded(inSlot.srcId)) {
+                  map.off('sourcedata', onData)
+                  if (crossfadeRef.current[layer.id]?.gen === gen) run()
+                }
+              }
+              map.on('sourcedata', onData)
+            }
+          } else {
+            // Mismo frame: solo opacidad/visibilidad (slider de opacidad, toggle).
+            // No tocar si hay un fundido en curso (lo gestiona la animación).
+            if (state.raf == null) {
+              setOp(lyrIdOf(state.current), target)
+              setOp(lyrIdOf(state.current === 'a' ? 'b' : 'a'), 0)
+            }
+          }
+          continue
+        }
 
         // ── Capa raster: overlay de imagen (GeoTIFF coloreado) ──────────────
         if (layer.geometryType === 'raster' && layer.imageUrl) {
