@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "gen:lst": "node scripts/gen-lst-manifest.mjs",
+    "predev": "node scripts/gen-lst-manifest.mjs",
     "dev": "next dev",
+    "prebuild": "node scripts/gen-lst-manifest.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"

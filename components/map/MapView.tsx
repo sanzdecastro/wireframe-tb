@@ -81,6 +81,8 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
   // Lectura de valor del ráster bajo el cursor (hover)
   const [hoverReadout, setHoverReadout] = useState<{ layerId: string; text: string } | null>(null)
   const zoneMarkersRef = useRef<Record<string, any>>({})
+  // imageUrl actual de cada source `image` (para detectar cambio de frame raster)
+  const imageUrlRef = useRef<Record<string, string>>({})
   const drawCoordsRef = useRef<number[][]>([])
   const drawMarkersRef = useRef<any[]>([])
   const drawModeRef = useRef(drawMode)
@@ -765,8 +767,14 @@ export function MapView({ drawMode, mapMode, projects, pendingCoords, selectedPr
             [minLng, maxLat], [maxLng, maxLat], [maxLng, minLat], [minLng, minLat],
           ]
 
-          if (!map.getSource(srcId)) {
+          const existingImg = map.getSource(srcId) as any
+          if (!existingImg) {
             map.addSource(srcId, { type: 'image', url: layer.imageUrl, coordinates } as any)
+            imageUrlRef.current[srcId] = layer.imageUrl
+          } else if (imageUrlRef.current[srcId] !== layer.imageUrl) {
+            // Serie temporal: el frame cambió → intercambiar la imagen del overlay.
+            existingImg.updateImage({ url: layer.imageUrl, coordinates })
+            imageUrlRef.current[srcId] = layer.imageUrl
           }
 
           if (!map.getLayer(lyrId)) {

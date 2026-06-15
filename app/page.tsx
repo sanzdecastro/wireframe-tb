@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
-import { KPI, Project, AppView, MapMode, SidePanel, ProjectFilters, ProjectDeviceFilters, SensorFilters, Sensor, GpkgFeatureLayer } from '@/types'
+import { KPI, Project, AppView, MapMode, SidePanel, ProjectFilters, ProjectDeviceFilters, SensorFilters, Sensor, GpkgFeatureLayer, RasterFrame } from '@/types'
 import { DEFAULT_KPIS, DEFAULT_PROJECTS, SENSORS, SENSORS_BY_ID } from '@/lib/data'
 
 import { Navbar }         from '@/components/layout/Navbar'
@@ -18,8 +18,22 @@ import { SensorFiltersPanel, EMPTY_SENSOR_FILTERS, countActiveSensorFilters, app
 import { DevicePanel } from '@/components/panels/DevicePanel'
 import { EMPTY_DEVICE_FILTERS, generateProjectDevices, applyDeviceFilters, ProjectDevice } from '@/lib/projectDevices'
 import { ImportResult } from '@/lib/csvImport'
-import { aggregateRasterInPolygon } from '@/lib/layerAdapters/rasterValueRegistry'
+import { aggregateRasterInPolygon, registerRasterValues } from '@/lib/layerAdapters/rasterValueRegistry'
 import type { ZoneRasterStat } from '@/components/panels/ZonePanel'
+import { TimeSlider } from '@/components/map/TimeSlider'
+
+// Capa LST como serie temporal: un único layer cuyo frame visible cambia con
+// el scrubber. Su `id` es estable y rasterValueRegistry[id] guarda SIEMPRE el
+// frame actual (hover/zona siguen consultando por layer.id sin cambios).
+const LST_LAYER_ID = 'lst_timeseries'
+const LST_RAMP = 'inferno' as const
+
+interface LstFrameEntry {
+  imageUrl:    string
+  bounds:      [number, number, number, number]
+  colorScheme: GpkgFeatureLayer['colorScheme']
+  values:      { data: ArrayLike<number>; width: number; height: number; nodata: number | null }
+}
 
 export default function Home() {
   const [view, setView]           = useState<AppView>('home')
@@ -172,12 +186,12 @@ export default function Home() {
     setGpkgLayers(prev => [...prev, ...layers])
   }, [])
 
-  // Capas de ejemplo precargadas: GeoTIFFs de Barcelona (temperatura superficial
-  // e índices ambientales), procesados en cliente con geotiff.js y coloreados
-  // con Viridis. NDVI/NDBI/UTFVI son índices adimensionales (sin unidad).
+  // Capas de ejemplo precargadas: GeoTIFFs de Barcelona (índices ambientales),
+  // procesados en cliente con geotiff.js y coloreados. NDVI/NDBI/UTFVI son
+  // índices adimensionales (sin unidad). La LST es una serie temporal y se
+  // carga aparte (ver efecto de abajo) para soportar el scrubber por fecha.
   useEffect(() => {
     const RASTER_LAYERS = [
-      { file: 'Barcelona_LST.tif',   label: 'Temperatura superficial (LST) · Barcelona', valueLabel: 'Temperatura superficial', valueUnit: '°C', ramp: 'inferno' as const },
       { file: 'Barcelona_NDVI.tif',  label: 'Vegetación (NDVI) · Barcelona',             valueLabel: 'NDVI',                     valueUnit: '',   ramp: 'ndvi' as const },
       { file: 'Barcelona_NDBI.tif',  label: 'Superficie construida (NDBI) · Barcelona',  valueLabel: 'NDBI',                     valueUnit: '',   ramp: 'magma' as const },
       { file: 'Barcelona_UTFVI.tif', label: 'Estrés térmico urbano (UTFVI) · Barcelona', valueLabel: 'UTFVI',                    valueUnit: '',   ramp: 'reds' as const },
@@ -208,8 +222,137 @@ export default function Home() {
     return () => { cancelled = true }
   }, [])
 
+  // ── Serie temporal LST (scrubber por fecha) ─────────────────────────────────
+  // Frames decodificados cacheados fuera del estado React (TypedArrays pesados).
+  const lstFrameCache = useRef<Map<string, LstFrameEntry>>(new Map())
+  const lstDomain     = useRef<[number, number] | undefined>(undefined)
+  const lstFramesRef  = useRef<RasterFrame[]>([])
+
+  // Decodifica (o recupera de caché) un frame LST, coloreado con el dominio
+  // global compartido para que los frames sean comparables en el tiempo.
+  const decodeLstFrame = useCallback(async (file: string): Promise<LstFrameEntry> => {
+    const cached = lstFrameCache.current.get(file)
+    if (cached) return cached
+    const { geotiffAdapter } = await import('@/lib/layerAdapters')
+    const res = await fetch(`/${file}`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const blob    = await res.blob()
+    const f       = new File([blob], file, { type: 'image/tiff' })
+    const preview = await geotiffAdapter.preview(f, { colorRamp: LST_RAMP, colorDomain: lstDomain.current })
+    const r       = preview.raster!
+    const entry: LstFrameEntry = {
+      imageUrl:    r.imageUrl,
+      bounds:      r.bounds,
+      colorScheme: r.colorScheme,
+      values:      { data: r.data, width: r.width, height: r.height, nodata: r.nodata },
+    }
+    lstFrameCache.current.set(file, entry)
+    return entry
+  }, [])
+
+  // Carga el manifiesto (público/lst_timeseries.json), decodifica el primer
+  // frame y registra la capa temporal. Las fechas vienen del nombre de archivo
+  // (ver scripts/gen-lst-manifest.mjs).
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch('/lst_timeseries.json')
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const manifest = await res.json() as { domain: [number, number] | null; frames: RasterFrame[] }
+        if (!manifest.frames?.length) return
+        lstDomain.current    = manifest.domain ?? undefined
+        lstFramesRef.current  = manifest.frames
+        const first = await decodeLstFrame(manifest.frames[0].file)
+        if (cancelled) return
+        registerRasterValues(LST_LAYER_ID, { ...first.values, bounds: first.bounds })
+        setGpkgLayers(prev => prev.some(l => l.id === LST_LAYER_ID) ? prev : [...prev, {
+          id:                LST_LAYER_ID,
+          label:             'Temperatura superficial (LST) · Barcelona',
+          tableName:         'geotiff',
+          geojson:           { type: 'FeatureCollection', features: [] },
+          geometryType:      'raster',
+          color:             first.colorScheme?.stops?.[0]?.[1] ?? '#21918c',
+          active:            true,
+          opacity:           80,
+          colorScheme:       first.colorScheme,
+          tileBounds:        first.bounds,
+          imageUrl:          first.imageUrl,
+          valueLabel:        'Temperatura superficial',
+          valueUnit:         '°C',
+          frames:            manifest.frames,
+          currentFrameIndex: 0,
+        }])
+      } catch (err) {
+        console.error('[LST timeseries] No se pudo cargar:', err)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [decodeLstFrame])
+
+  // Cambia el frame visible de la capa LST: actualiza el índice de inmediato y,
+  // tras decodificar, intercambia imageUrl/bounds y re-registra los valores
+  // crudos bajo el id estable (para hover y agregación por zona).
+  const handleLstFrameChange = useCallback((index: number) => {
+    const frame = lstFramesRef.current[index]
+    if (!frame) return
+    setGpkgLayers(prev => prev.map(l => l.id === LST_LAYER_ID ? { ...l, currentFrameIndex: index } : l))
+    decodeLstFrame(frame.file)
+      .then(entry => {
+        registerRasterValues(LST_LAYER_ID, { ...entry.values, bounds: entry.bounds })
+        setGpkgLayers(prev => prev.map(l => l.id === LST_LAYER_ID
+          ? { ...l, imageUrl: entry.imageUrl, tileBounds: entry.bounds, colorScheme: entry.colorScheme }
+          : l))
+      })
+      .catch(err => console.error(`[LST frame] No se pudo cargar ${frame.file}:`, err))
+  }, [decodeLstFrame])
+
+  // Capas de arbolado (CSV → GeoJSON precomputado). Se registran como placeholders
+  // vacíos; el GeoJSON (pesado) sólo se descarga al activar la capa (carga diferida).
+  useEffect(() => {
+    const TREE_LAYERS: GpkgFeatureLayer[] = [
+      {
+        id: 'arbrat_viari', label: 'Arbrat viari (carrer) · Barcelona',
+        tableName: 'geojson', geojson: { type: 'FeatureCollection', features: [] },
+        geometryType: 'point', color: '#4caf50', active: false, opacity: 80,
+        dataUrl: '/arbrat_viari.geojson',
+      },
+      {
+        id: 'arbrat_parcs', label: 'Arbrat de parcs · Barcelona',
+        tableName: 'geojson', geojson: { type: 'FeatureCollection', features: [] },
+        geometryType: 'point', color: '#1b5e20', active: false, opacity: 80,
+        dataUrl: '/arbrat_parcs.geojson',
+      },
+    ]
+    setGpkgLayers(prev => {
+      const existing = new Set(prev.map(l => l.id))
+      const toAdd = TREE_LAYERS.filter(l => !existing.has(l.id))
+      return toAdd.length ? [...prev, ...toAdd] : prev
+    })
+  }, [])
+
+  // Capas cuyo GeoJSON diferido se está descargando ahora mismo
+  const loadingLayersRef = useRef<Set<string>>(new Set())
+
   const handleGpkgLayerToggle = useCallback((id: string) => {
-    setGpkgLayers(prev => prev.map(l => l.id === id ? { ...l, active: !l.active } : l))
+    setGpkgLayers(prev => {
+      const layer = prev.find(l => l.id === id)
+      if (!layer) return prev
+      const turningOn = !layer.active
+
+      // Carga diferida: al activar por primera vez, descargar el GeoJSON
+      const features = (layer.geojson as any).features ?? []
+      if (turningOn && layer.dataUrl && features.length === 0 && !loadingLayersRef.current.has(id)) {
+        loadingLayersRef.current.add(id)
+        fetch(layer.dataUrl)
+          .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json() })
+          .then(fc => setGpkgLayers(p => p.map(l => l.id === id ? { ...l, geojson: fc } : l)))
+          .catch(err => console.error(`[tree layer] No se pudo cargar ${layer.dataUrl}:`, err))
+          .finally(() => loadingLayersRef.current.delete(id))
+      }
+
+      return prev.map(l => l.id === id ? { ...l, active: turningOn } : l)
+    })
   }, [])
 
   const handleGpkgLayerOpacity = useCallback((id: string, opacity: number) => {
@@ -442,6 +585,19 @@ export default function Home() {
               isochroneMode={isochroneMode}
               onIsochroneToggle={() => setIsochroneMode(v => !v)}
             />
+
+            {/* Scrubber temporal de la capa LST (visible solo si está activa) */}
+            {(() => {
+              const lst = gpkgLayers.find(l => l.id === LST_LAYER_ID)
+              if (!lst?.active || !lst.frames || lst.frames.length === 0) return null
+              return (
+                <TimeSlider
+                  frames={lst.frames}
+                  index={lst.currentFrameIndex ?? 0}
+                  onIndexChange={handleLstFrameChange}
+                />
+              )
+            })()}
 
             {/* Legend */}
             <div className="absolute bottom-4 left-4 z-10 flex gap-2">

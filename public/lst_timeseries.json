@@ -1,0 +1,32 @@
+{
+  "domain": [
+    16.105031967163086,
+    58.65254592895508
+  ],
+  "frames": [
+    {
+      "file": "lst/Barcelona_LST_2021-08-20.tif",
+      "date": "2021-08-20"
+    },
+    {
+      "file": "lst/Barcelona_LST_2022-08-20.tif",
+      "date": "2022-08-20"
+    },
+    {
+      "file": "lst/Barcelona_LST_2023-08-20.tif",
+      "date": "2023-08-20"
+    },
+    {
+      "file": "lst/Barcelona_LST_2024-08-20.tif",
+      "date": "2024-08-20"
+    },
+    {
+      "file": "lst/Barcelona_LST_2025-08-20.tif",
+      "date": "2025-08-20"
+    },
+    {
+      "file": "lst/Barcelona_LST_2026-06-10.tif",
+      "date": "2026-06-10"
+    }
+  ]
+}

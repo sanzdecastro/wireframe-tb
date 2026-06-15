@@ -16,7 +16,11 @@ import { rampRGB, rampStops, type RampName } from './colorRamps'
 import { registerRasterValues } from './rasterValueRegistry'
 import type { LayerAdapter, AdapterPreview, AdapterBuildOptions, RasterPreview, PreviewOptions } from './types'
 
-async function buildRasterPreview(buffer: ArrayBuffer, ramp: RampName): Promise<RasterPreview> {
+async function buildRasterPreview(
+  buffer: ArrayBuffer,
+  ramp: RampName,
+  colorDomain?: [number, number],
+): Promise<RasterPreview> {
   // Import dinámico: geotiff solo se carga en cliente y bajo demanda.
   const { fromArrayBuffer } = await import('geotiff')
 
@@ -50,6 +54,10 @@ async function buildRasterPreview(buffer: ArrayBuffer, ramp: RampName): Promise<
   }
   if (min === max) max = min + 1   // evita división por cero al normalizar
 
+  // Dominio de color: fijo (series temporales, escala compartida) o el del
+  // propio archivo. La leyenda y la normalización usan SIEMPRE este dominio.
+  const [domMin, domMax] = colorDomain ?? [min, max]
+
   // ── Colorear el ráster en un canvas ───────────────────────────────────────
   const canvas = document.createElement('canvas')
   canvas.width  = width
@@ -59,13 +67,14 @@ async function buildRasterPreview(buffer: ArrayBuffer, ramp: RampName): Promise<
 
   const imgData = ctx.createImageData(width, height)
   const px      = imgData.data
-  const range   = max - min
+  const range   = (domMax - domMin) || 1
 
   for (let i = 0; i < band.length; i++) {
     const v = band[i]
     const o = i * 4
     if (!isValid(v)) { px[o + 3] = 0; continue }   // nodata → transparente
-    const [r, g, b] = rampRGB(ramp, (v - min) / range)
+    const t = Math.min(1, Math.max(0, (v - domMin) / range))   // clamp al dominio
+    const [r, g, b] = rampRGB(ramp, t)
     px[o]     = r
     px[o + 1] = g
     px[o + 2] = b
@@ -98,11 +107,12 @@ async function buildRasterPreview(buffer: ArrayBuffer, ramp: RampName): Promise<
   return {
     imageUrl,
     bounds,
-    stats: { min, max },
+    // Leyenda y paradas referidas al dominio efectivo (compartido en series).
+    stats: { min: domMin, max: domMax },
     colorScheme: {
       property: 'valor',
       type:     'gradient',
-      stops:    rampStops(ramp, min, max),
+      stops:    rampStops(ramp, domMin, domMax),
     },
     data: band,
     width,
@@ -121,7 +131,7 @@ export const geotiffAdapter: LayerAdapter = {
 
   async preview(file: File, opts?: PreviewOptions): Promise<AdapterPreview> {
     const buffer = await file.arrayBuffer()
-    const raster = await buildRasterPreview(buffer, opts?.colorRamp ?? 'viridis')
+    const raster = await buildRasterPreview(buffer, opts?.colorRamp ?? 'viridis', opts?.colorDomain)
     return {
       sourceType:    'geotiff',
       featureCount:  0,

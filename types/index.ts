@@ -96,6 +96,19 @@ export interface GpkgFeatureLayer {
   // Lectura de valor en hover (rásters con valores en rasterValueRegistry).
   valueLabel?:    string   // p.ej. "Temperatura superficial"
   valueUnit?:     string   // p.ej. "°C"
+  // Carga diferida: GeoJSON pesado que sólo se descarga al activar la capa.
+  // Mientras `geojson` esté vacío y exista `dataUrl`, los datos no se han cargado.
+  dataUrl?:       string
+  // Serie temporal (raster con varios frames por fecha). Cuando está presente,
+  // `imageUrl`/`tileBounds` y el registro de valores (rasterValueRegistry[id])
+  // reflejan SIEMPRE el frame `currentFrameIndex`; el scrubber los intercambia.
+  frames?:            RasterFrame[]
+  currentFrameIndex?: number
+}
+
+export interface RasterFrame {
+  file: string          // nombre del GeoTIFF en /public
+  date: string | null   // ISO 'YYYY-MM-DD' o null si el archivo no la lleva
 }
 
 export interface MapLayer {

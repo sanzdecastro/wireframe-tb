@@ -12,6 +12,13 @@ export type AdapterSourceType = 'geojson' | 'csv' | 'gpkg' | 'geotiff'
 export interface PreviewOptions {
   /** Rampa de color para rásters (geotiff). Default: 'viridis'. */
   colorRamp?: RampName
+  /**
+   * Dominio [min, max] fijo para normalizar la rampa de color y las paradas
+   * de la leyenda. Cuando se pasa, NO se usa el min/max propio del archivo.
+   * Imprescindible para series temporales: garantiza que todos los frames
+   * compartan la misma escala y sean comparables a lo largo del tiempo.
+   */
+  colorDomain?: [number, number]
 }
 
 export interface AdapterPreview {
