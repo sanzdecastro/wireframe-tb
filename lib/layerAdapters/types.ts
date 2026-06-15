@@ -44,6 +44,10 @@ export interface RasterPreview {
 export interface AdapterBuildOptions {
   label:     string
   colorProp: string | null   // null = color plano
+  /** Etiqueta del valor del ráster (p.ej. "Temperatura superficial", "NDVI") */
+  valueLabel?: string
+  /** Unidad del valor del ráster (p.ej. "°C"); vacío para índices adimensionales */
+  valueUnit?:  string
 }
 
 export interface LayerAdapter {

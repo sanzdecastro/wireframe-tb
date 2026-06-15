@@ -153,8 +153,8 @@ export const geotiffAdapter: LayerAdapter = {
       colorScheme,
       tileBounds:   bounds,
       imageUrl,
-      valueLabel:   'Temperatura superficial',
-      valueUnit:    '°C',
+      valueLabel:   options.valueLabel ?? 'Temperatura superficial',
+      valueUnit:    options.valueUnit  ?? '°C',
     }
   },
 }

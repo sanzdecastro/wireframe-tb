@@ -168,25 +168,37 @@ export default function Home() {
     setGpkgLayers(prev => [...prev, ...layers])
   }, [])
 
-  // Capa de ejemplo precargada: GeoTIFF de temperatura superficial (LST) de
-  // Barcelona, procesado en cliente con geotiff.js y coloreado con Viridis.
+  // Capas de ejemplo precargadas: GeoTIFFs de Barcelona (temperatura superficial
+  // e índices ambientales), procesados en cliente con geotiff.js y coloreados
+  // con Viridis. NDVI/NDBI/UTFVI son índices adimensionales (sin unidad).
   useEffect(() => {
+    const RASTER_LAYERS = [
+      { file: 'Barcelona_LST.tif',   label: 'Temperatura superficial (LST) · Barcelona', valueLabel: 'Temperatura superficial', valueUnit: '°C' },
+      { file: 'Barcelona_NDVI.tif',  label: 'Vegetación (NDVI) · Barcelona',             valueLabel: 'NDVI',                     valueUnit: '' },
+      { file: 'Barcelona_NDBI.tif',  label: 'Superficie construida (NDBI) · Barcelona',  valueLabel: 'NDBI',                     valueUnit: '' },
+      { file: 'Barcelona_UTFVI.tif', label: 'Estrés térmico urbano (UTFVI) · Barcelona', valueLabel: 'UTFVI',                    valueUnit: '' },
+    ]
     let cancelled = false
     ;(async () => {
-      try {
-        const res = await fetch('/Barcelona_LST.tif')
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const blob = await res.blob()
-        const file = new File([blob], 'Barcelona_LST.tif', { type: 'image/tiff' })
-        const { geotiffAdapter } = await import('@/lib/layerAdapters')
-        const preview = await geotiffAdapter.preview(file)
-        const layer   = geotiffAdapter.build(preview, {
-          label:     'Temperatura superficial (LST) · Barcelona',
-          colorProp: null,
-        })
-        if (!cancelled) setGpkgLayers(prev => [...prev, layer])
-      } catch (err) {
-        console.error('[LST example] No se pudo cargar la capa de ejemplo:', err)
+      const { geotiffAdapter } = await import('@/lib/layerAdapters')
+      for (const cfg of RASTER_LAYERS) {
+        try {
+          const res = await fetch(`/${cfg.file}`)
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          const blob = await res.blob()
+          const file = new File([blob], cfg.file, { type: 'image/tiff' })
+          const preview = await geotiffAdapter.preview(file)
+          const layer   = geotiffAdapter.build(preview, {
+            label:      cfg.label,
+            colorProp:  null,
+            valueLabel: cfg.valueLabel,
+            valueUnit:  cfg.valueUnit,
+          })
+          if (cancelled) return
+          setGpkgLayers(prev => [...prev, layer])
+        } catch (err) {
+          console.error(`[raster example] No se pudo cargar ${cfg.file}:`, err)
+        }
       }
     })()
     return () => { cancelled = true }
